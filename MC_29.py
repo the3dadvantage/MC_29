@@ -78,8 +78,8 @@ if True:
         from . import MC_self_collision
         from . import MC_object_collision
     except:
-        object_collision = bpy.data.texts['MC_object_collision.py'].as_module()
-        self_collide = bpy.data.texts['MC_self_collision.py'].as_module()
+        MC_object_collision = bpy.data.texts['MC_object_collision.py'].as_module()
+        MC_self_collision = bpy.data.texts['MC_self_collision.py'].as_module()
         print("Tried to import internal texts.")
 
 
@@ -1824,12 +1824,6 @@ class Collider():
         frs = [c.MC_props.outer_margin for c in colliders]
         sfrs = [c.MC_props.static_friction  * .0001 for c in colliders]
         
-        fcs = [len(c.data.polygons) for c in colliders]
-        total_f_count = np.sum(fcs)
-        cloth.total_margins = np.zeros(total_f_count, dtype=np.float32)[:, None]
-        cloth.total_friction = np.ones(total_f_count, dtype=np.float32)[:, None]
-        cloth.total_static = np.zeros(total_f_count, dtype=np.float32)
-        
         shift = 0
         for i, c in enumerate(colliders):
             if c.data.is_editmode:
@@ -1839,6 +1833,13 @@ class Collider():
             total_tridex = np.append(total_tridex, get_tridex_2(ob=None, mesh=proxy) + shift, axis=0)
             shift = vcs[i]
                 
+        #fcs = [len(c.data.polygons) for c in colliders]
+        fcs = total_tridex.shape[0]
+        total_f_count = np.sum(fcs)
+        cloth.total_margins = np.zeros(total_f_count, dtype=np.float32)[:, None]
+        cloth.total_friction = np.ones(total_f_count, dtype=np.float32)[:, None]
+        cloth.total_static = np.zeros(total_f_count, dtype=np.float32)
+        
         cloth.total_tridex = total_tridex
         cloth.oc_indexer = np.arange(total_tridex.shape[0], dtype=np.int32)
         cloth.total_co = total_co

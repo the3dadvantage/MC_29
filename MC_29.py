@@ -5058,6 +5058,10 @@ def register():
 
 def unregister():
     # classes
+    
+    msg = 'Goodbye cruel world. I may be unregistered but I will live on in your hearts. MC_29 FOREVER!'
+    bpy.context.window_manager.popup_menu(oops, title=msg, icon='ERROR')
+
     from bpy.utils import unregister_class
     for cls in reversed(classes):
         unregister_class(cls)
@@ -5078,8 +5082,10 @@ def unregister():
     booly = [i == 'reload_from_save' for i in handler_names]
     idx = np.arange(handler_names.shape[0])
     idx_to_kill = idx[booly]
+
     for i in idx_to_kill[::-1]:
-        del(bpy.app.handlers.load_pre[i])
+        del(bpy.app.handlers.load_post[i])
+        
 
 if __name__ == "__main__":
     register()

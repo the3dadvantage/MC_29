@@ -177,8 +177,8 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs):
     return check, weights
 
 
-def b2(sc, cloth):
-    print('runing b2')
+def b2(sc, cloth, count):
+    print('runing b2', count)
     if len(sc.big_boxes) == 0:
         print("ran out")
         return
@@ -306,7 +306,8 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
 
     # l = left, r = right, f = front, b = back, u = up, d = down
     if idx is None:
-        idx = cloth.oc_indexer
+        idx = np.arange(sc.tris6.shape[0], dtype=np.int32)
+        #idx = cloth.oc_indexer
     if eidx is None:    
         eidx = cloth.oc_eidx
 
@@ -408,14 +409,60 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     return full, efull, [bounds_8[0][both], bounds_8[1][both]]
     
 
-def self_collisions_7(sc, margin=0.1, cloth=None):
+def total_bounds(sc, cloth):
     
-    T = time.time()
+    bool = cloth.tris6_bool
+    bool[:] = True
+    
+    box_min = np.min(cloth.oc_co, axis=0) - sc.M
+    box_max = np.max(cloth.oc_co, axis=0) + sc.M
+    
+    bool[sc.txmax < box_min[0]] = False
+    bool[sc.txmin > box_max[0]] = False
 
-    tx = sc.tris[:, :, 0]
-    ty = sc.tris[:, :, 1]
-    tz = sc.tris[:, :, 2]
+    bool[sc.tymax < box_min[1]] = False
+    bool[sc.tymin > box_max[1]] = False
+
+    bool[sc.tzmax < box_min[2]] = False
+    bool[sc.tzmin > box_max[2]] = False
     
+    return cloth.oc_tris_six[bool]
+
+
+def object_collisions_7(sc, margin=0.1, cloth=None):
+
+    tx = cloth.oc_tris_six[:, :, 0]
+    ty = cloth.oc_tris_six[:, :, 1]
+    tz = cloth.oc_tris_six[:, :, 2]
+
+    txmax = np.max(tx, axis=1)# + margin
+    txmin = np.min(tx, axis=1)# - margin
+
+    tymax = np.max(ty, axis=1)# + margin
+    tymin = np.min(ty, axis=1)# - margin
+
+    tzmax = np.max(tz, axis=1)# + margin
+    tzmin = np.min(tz, axis=1)# - margin
+
+    sc.txmax = txmax
+    sc.txmin = txmin
+
+    sc.tymax = tymax
+    sc.tymin = tymin
+
+    sc.tzmax = tzmax
+    sc.tzmin = tzmin
+
+    # cloth box cull
+    tris6 = total_bounds(sc, cloth)
+    sc.tris6 = tris6
+    if tris6.shape[0] == 0:
+        return
+    
+    tx = tris6[:, :, 0]
+    ty = tris6[:, :, 1]
+    tz = tris6[:, :, 2]
+
     txmax = np.max(tx, axis=1) + margin
     txmin = np.min(tx, axis=1) - margin
 
@@ -433,6 +480,7 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
 
     sc.tzmax = tzmax
     sc.tzmin = tzmin
+
 
     # edge bounds:
     ex = sc.edges[:, :, 0]
@@ -452,7 +500,7 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
     #       to know if we hit a weird case where we're no longer getting fewer in boxes
     
     tfull, efull, bounds = octree_et(sc, margin=0.0, cloth=cloth)
-
+    #print([b.shape for b in tfull], "this is tfull")
     T = time.time()
     for i in range(len(tfull)):
         t = tfull[i]
@@ -471,23 +519,23 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
     #timer(time.time()-T, 'sort boxes')
     T = time.time()
     
-    limit = 3
-    count = 0
+    limit = 6
+    count = 1
     #sc.report = True
     while len(sc.big_boxes) > 0:
-        b2(sc, cloth)
+        b2(sc, cloth, count)
         #if sc.report:    
             #print("recursion level:", count)
-        if count > limit:
+        if count == limit:
             for b in sc.big_boxes:
                 sc.small_boxes.append(b)
             break
         count += 1    
     
-
+    print("made it past b2")
     #timer(time.time()-T, 'b2')    
     #if sc.report:
-    if 0:
+    if 1:
         print(len(sc.big_boxes), "how many big boxes")
         print(len(sc.small_boxes), "how many small boxes")
         
@@ -498,12 +546,12 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
         if ed.shape[0] == 0:
             continue
         
-        tris = sc.tris[trs]
+        tris = sc.tris6[trs]
         eds = sc.edges[ed]
         
-
+        #print('checking box', en, b[0].shape[0], b[1].shape[0])
         # detect link faces and broadcast
-        #nlf_0 = cloth.sc_edges[ed][:, 0] == cloth.total_tridex[trs][:, :, None]
+        #nlf_0 = cloth.sc_edges[ed][:, 0] == cloth.oc_total_tridex[trs][:, :, None]
         #ab = np.any(nlf_0, axis=1)
 
         rse = np.tile(ed, trs.shape[0])
@@ -540,6 +588,36 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
             
             sc.ees += re.tolist()
             sc.trs += rt.tolist()
+        
+        # testing !!!!!!!
+        #if en == 0:
+        if False:
+            print(rt)
+            print()
+            print()
+            print('----------')
+            print('ed')
+            print(ed.shape[0], 'ed shape')
+            print(trs.shape[0], 'trs')
+            
+            egg = bpy.data.objects['collide']
+            ring = bpy.data.objects['Cube']
+            
+            for p in tfull[0]:
+                egg.data.polygons[p].select = True
+            for v in ed:
+                print('======================')
+                print('======================')
+                print('======================')
+                print('======================')
+                print('======================')
+                print(v, '======================')
+                ring.data.vertices[v].select = True
+            
+            egg.data.update()
+            ring.data.update()
+            
+            #error
 
 
 def ray_check(sc, ed, trs, cloth):
@@ -552,7 +630,7 @@ def ray_check(sc, ed, trs, cloth):
     # e is the start co and current co of the cloth paird in Nx2x3    
     e = sc.edges[ed]
 
-    t = sc.tris[trs]
+    t = sc.tris6[trs]
     
     start_co = e[:, 0]
     co = e[:, 1]
@@ -619,79 +697,42 @@ class ObjectCollide():
     name = "oc"
     
     def __init__(self, cloth):
-
-        tris_six = cloth.oc_tris_six# = np.empty((total_tridex.shape[0], 6, 3), dtype=np.float32)
         
-        ob = cloth.ob
-        ### tris_six = cloth.tris_six
 
-        sco = apply_transforms(ob, cloth.select_start)
-        fco = apply_transforms(ob, cloth.co)
+        sco = apply_transforms(cloth.ob, cloth.select_start)
+        fco = apply_transforms(cloth.ob, cloth.co)
         self.fco = fco
         
         cloth.oc_co[:cloth.v_count] = sco
-        #cloth.oc_co[:cloth.v_count] = fco
         cloth.oc_co[cloth.v_count:] = fco
+        # if static:
+            # should make tris six into tries three here using just cloth.total_co
         
-        tris_six[:, :3] = cloth.last_co[cloth.total_tridex]
-        tris_six[:, 3:] = cloth.total_co[cloth.total_tridex]
+        cloth.oc_tris_six[:, :3] = cloth.last_co[cloth.oc_total_tridex]
+        cloth.oc_tris_six[:, 3:] = cloth.total_co[cloth.oc_total_tridex]
 
         # -----------------------
 
-        self.box_max = cloth.ob.MC_props.sc_box_max
+        self.box_max = cloth.ob.MC_props.sc_box_max        
         
         self.M = cloth.OM
         #self.force = cloth.ob.MC_props.self_collide_force
-        self.tris = tris_six
+        self.tris = cloth.oc_tris_six
         self.edges = cloth.oc_co[cloth.sc_edges]
         self.big_boxes = [] # boxes that still need to be divided
         self.small_boxes = [] # finished boxes less than the maximum box size
         self.trs = []
         self.ees = []
-        
-        return
-        # debug stuff
-        self.sel = False
-        #self.sel = True
-        self.report = False
-        #self.report = True
-        if self.report:
-            self.select_counter = np.zeros(cloth.sc_eidx.shape[0], dtype=np.int32)        
-        if self.sel:
-            if self.ob.data.is_editmode:
-                self.obm = bmesh.from_edit_mesh(self.ob.data)
-            else:    
-                self.obm = bmesh.new()
-                self.obm.from_mesh(self.ob.data)
-            self.obm.edges.ensure_lookup_table()
-            self.obm.verts.ensure_lookup_table()
-            self.obm.faces.ensure_lookup_table()
 
 
 def detect_collisions(cloth):
     
     sc = ObjectCollide(cloth)
 
-    #return
-    t = time.time()
-
-    self_collisions_7(sc, sc.M, cloth)
+    object_collisions_7(sc, sc.M, cloth)
 
     ray_check(sc, sc.ees, sc.trs, cloth)
     
-    return
-        
-    if sc.report:
-        print(sc.box_max, "box max")
-        print(np.sum(sc.select_counter > 1), ": In too many boxes")
-        print(np.max(sc.select_counter), "max times and edge was selected")
-        print(time.time() - t)
-        
-    if sc.sel:
-        if ob.data.is_editmode:
-            bmesh.update_edit_mesh(ob.data)
-            
-        ob.data.update()
 
 def register():
     pass

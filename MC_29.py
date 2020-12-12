@@ -120,8 +120,6 @@ def reload():
     MC_data['cloth_count'] = 0
     MC_data['collider_count'] = 0
 
-#reload()
-
 
 def np_co_to_text(ob, co, rw='w', cloth=None):
     """Read or write cache file"""
@@ -1686,6 +1684,8 @@ def get_sew_springs(cloth):
 def hook_force(cloth):
     id = cloth.ob['MC_cloth_id']
     empties = [o for o in bpy.data.objects if o.type == 'EMPTY']
+    # fix this by creating a prop
+    empties = [h for h in empties if 'MC_cloth_id' in h]
     hooks = [h for h in empties if h['MC_cloth_id'] == id]
     if len(hooks) < 1:
         return
@@ -1813,14 +1813,33 @@ class Collider():
         vcs = [len(c.data.vertices) for c in colliders]
         
         total_v_count = np.sum(vcs)
-        total_co = np.empty((total_v_count, 3), dtype=np.float32)
-        total_tridex = np.empty((0,3), dtype=np.int32)
+        cloth.total_co = np.empty((total_v_count, 3), dtype=np.float32)
+        
+        # have to initalize total_co and last_co for objects
+        colliders = [o for o in bpy.data.objects if (o.MC_props.collider) & (cloth.ob != o)]
+        #oms = [c.MC_props.outer_margin for c in colliders]
+        vcs = [len(c.data.vertices) for c in colliders]
+        shift = 0
+        for i, c in enumerate(colliders):
+            abco, proxy = absolute_co(c)        
+            normals = get_proxy_normals(ob=c, proxy=proxy)
+            normals = apply_rotation(c, normals) # could put the collider proxy on an object and copy the world matrix over maybe? Not sure...
+            ob_settings = not cloth.ob.MC_props.override_settings
+            if ob_settings:
+                surface_offset = normals * c.MC_props.outer_margin
+            else:    
+                surface_offset = normals * cloth.ob.MC_props.outer_margin
+            cloth.total_co[shift: shift+vcs[i]] = abco + surface_offset
+            shift = vcs[i]
+
+        cloth.last_co = np.copy(cloth.total_co) # for checing if the collider moved
+            
+        oc_total_tridex = np.empty((0,3), dtype=np.int32)
 
         # if I put these on vertex groups I can just multiply the
         # values by the groups. Will have to create groups
         # for the collide objects and set them to one by default.
         
-        oms = [c.MC_props.outer_margin for c in colliders]
         frs = [c.MC_props.outer_margin for c in colliders]
         sfrs = [c.MC_props.static_friction  * .0001 for c in colliders]
         
@@ -1830,24 +1849,22 @@ class Collider():
                 c.update_from_editmode()
 
             abco, proxy = absolute_co(c)
-            total_tridex = np.append(total_tridex, get_tridex_2(ob=None, mesh=proxy) + shift, axis=0)
+            oc_total_tridex = np.append(oc_total_tridex, get_tridex_2(ob=None, mesh=proxy) + shift, axis=0)
             shift = vcs[i]
                 
         #fcs = [len(c.data.polygons) for c in colliders]
-        fcs = total_tridex.shape[0]
+        fcs = oc_total_tridex.shape[0]
         total_f_count = np.sum(fcs)
         cloth.total_margins = np.zeros(total_f_count, dtype=np.float32)[:, None]
         cloth.total_friction = np.ones(total_f_count, dtype=np.float32)[:, None]
         cloth.total_static = np.zeros(total_f_count, dtype=np.float32)
         
-        cloth.total_tridex = total_tridex
-        cloth.oc_indexer = np.arange(total_tridex.shape[0], dtype=np.int32)
-        cloth.total_co = total_co
+        cloth.oc_total_tridex = oc_total_tridex
+        cloth.oc_indexer = np.arange(oc_total_tridex.shape[0], dtype=np.int32)
         cloth.static = False
         cloth.vcs = vcs
         cloth.fcs = fcs
-        cloth.last_co = np.copy(total_co) # for checing if the collider moved
-        cloth.oc_tris_six = np.empty((total_tridex.shape[0], 6, 3), dtype=np.float32)
+        cloth.oc_tris_six = np.empty((oc_total_tridex.shape[0], 6, 3), dtype=np.float32)
         cloth.oc_eidx = np.arange(len(cloth.ob.data.vertices), dtype=np.int32)
         cloth.oc_co = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
         
@@ -1855,6 +1872,9 @@ class Collider():
         cloth.oc_move = np.zeros((0, 3), dtype=np.float32)
         cloth.oc_move_idx = np.empty(0, dtype=np.int32)
         
+        cloth.tris6_bool = np.ones(cloth.oc_total_tridex.shape[0], dtype=np.bool)
+        
+        """ !!!!! There is a bug where any empty causes it to break !!!!!"""
 
 # cloth instance ---------------
 class Cloth(object):
@@ -1878,6 +1898,7 @@ def create_instance(ob=None):
     if ob is None:
         ob = bpy.context.object
     cloth.ob = ob
+    cloth.vcs = 0 # for object collisions
     refresh(cloth)
     return cloth
 
@@ -4196,42 +4217,59 @@ class MCResetSelectedToBasisShape(bpy.types.Operator):
         return {'FINISHED'}
 
 
+big_t = 0.0
+def rt_(num):
+    global big_t
+    t = time.time()
+    print(t - big_t, "timer", num)
+    big_t = t
+    
+
 def refresh(cloth):
     
     ob = cloth.ob
     
     if ob.data.is_editmode:
         ob.update_from_editmode()
-    
+    rt_('a')
     # target ----------
     cloth.target = None # (gets overwritten by def cb_target)
     cloth.current_cache_frame = 1 # for the cache continuous playback
     cloth.shape_update = False
-
+    rt_('b')
     # for detecting mode changes
     cloth.mode = 1
     if ob.data.is_editmode:
         cloth.mode = None
     cloth.undo = False
-
+    rt_('c')
     cloth.v_count = len(ob.data.vertices)
     v_count = cloth.v_count
     cloth.obm = get_bmesh(ob, refresh=True)
     cloth.co = get_co_edit(ob)
-        
+    
+    # slowdowns ------------------
+    rt_('d') # here !!!!!!!!!!   
     manage_vertex_groups(cloth)
+    rt_('e') # here !!!!!!!!!!
+    # slowdowns ------------------
 
     cloth.move_dist = np.zeros(v_count, dtype=np.float32) # used by static friction
     cloth.pin_arr = np.copy(cloth.co)
     cloth.geometry = get_mesh_counts(ob, cloth.obm)
+
+    # slowdowns ------------------
+    rt_('f') # here !!!!!!!!!!
     cloth.sew_springs = get_sew_springs(cloth)
+    rt_('g') # here !!!!!!!!!!!
+    # slowdowns ------------------
+    
     if False: # need to check if this works. Used by surface forces. search for " rev " in the collision module    
         cloth.wco = np.copy(cloth.co)
         apply_in_place(cloth.ob, cloth.wco)
     cloth.select_start = np.copy(cloth.co)
     cloth.stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
     cloth.selected = np.array([v.select for v in cloth.obm.verts])
-
     #cloth.ob.update_from_editmode()
     #cloth.obm.verts.ensure_lookup_table()
 
@@ -4246,7 +4284,7 @@ def refresh(cloth):
     cloth.measure_dot = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32) # for calculating the weights of the mean
     cloth.measure_length = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32) # for calculating the weights of the mean
     cloth.vdl = stretch_springs_basic(cloth, cloth.target)
-
+    rt_('g')
     #if doing_self_collisions:
     cloth.tridex = get_tridex_2(ob, mesh=ob.data)
     cloth.sc_edges = get_sc_edges(ob, fake=True)
@@ -4256,9 +4294,10 @@ def refresh(cloth):
     #cloth.surface_offset_tris = np.empty((cloth.tridex.shape[0], 2, 3, 3), dtype=np.float32)
     #cloth.choose_tris = np.empty((cloth.tridex.shape[0], 3, 3), dtype=np.float32)
     cloth.sc_co = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
-
+    rt_('h')
     Collider(cloth)
-
+    rt_('i')
+    
 
 class MCRefreshVertexGroups(bpy.types.Operator):
     """Refresh Vertex Group Weights To Cloth Settings"""
@@ -5088,4 +5127,5 @@ def unregister():
         
 
 if __name__ == "__main__":
+    reload()
     register()

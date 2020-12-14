@@ -97,6 +97,15 @@ MC_data['iterator'] = 0
 MC_data['recent_object'] = None
 
 
+big_t = 0.0
+def rt_(num=None):
+    global big_t
+    t = time.time()
+    if num is not None:    
+        print(t - big_t, "timer", num)
+    big_t = t
+
+
 # developer functions ------------------------
 def reload():
     """!! for development !! Resets everything"""
@@ -1195,7 +1204,7 @@ def bend_setup(cloth):
     #   add the center of the edge
     #   once at the end
     #   instead of doing it for all three
-
+    rt_()
     if cloth.ob.MC_props.quad_bend:
         cloth.quad_obm = get_quad_obm(cloth.ob)
         cloth.quad_obm.faces.ensure_lookup_table()
@@ -1209,7 +1218,7 @@ def bend_setup(cloth):
     get_eq_tri_tips(cloth, cloth.sco, cloth.source_centers)
     triangle_data(cloth)
     ab_setup(cloth)
-
+    rt_('inside bend')
 
 # abstract bend setup ----------------------------
 # dynamic ------------------------------
@@ -1574,6 +1583,8 @@ def virtual_springs(cloth):
 
 
 def get_sew_springs(cloth):
+    
+    rt_()
     obm = cloth.obm
     obm.edges.ensure_lookup_table()
     cloth.sew_edges = [e.index for e in obm.edges if len(e.link_faces) == 0]
@@ -1678,6 +1689,7 @@ def get_sew_springs(cloth):
     cloth.sew_pairs = sew_pairs
     cloth.sew_groups = groups
 
+    rt_('end sew')
     return sew_pairs, groups
 
 
@@ -1706,6 +1718,8 @@ def sew_force(cloth):
 
 def get_springs_2(cloth):
     """Create index for viewing stretch springs"""
+
+    rt_()
     obm = cloth.obm
 
     if not cloth.do_stretch:
@@ -1727,6 +1741,7 @@ def get_springs_2(cloth):
     cloth.basic_set = np.array(ed)
     cloth.basic_v_fancy = cloth.basic_set[:,0]
     cloth.stretch_group_mult = cloth.stretch_group[cloth.basic_v_fancy]
+    rt_('get springs 2')
 
 
 # ^                                                          ^ #
@@ -4215,14 +4230,6 @@ class MCResetSelectedToBasisShape(bpy.types.Operator):
         ob.data.update()
 
         return {'FINISHED'}
-
-
-big_t = 0.0
-def rt_(num):
-    global big_t
-    t = time.time()
-    print(t - big_t, "timer", num)
-    big_t = t
     
 
 def refresh(cloth):
@@ -4231,27 +4238,25 @@ def refresh(cloth):
     
     if ob.data.is_editmode:
         ob.update_from_editmode()
-    rt_('a')
+
     # target ----------
     cloth.target = None # (gets overwritten by def cb_target)
     cloth.current_cache_frame = 1 # for the cache continuous playback
     cloth.shape_update = False
-    rt_('b')
+
     # for detecting mode changes
     cloth.mode = 1
     if ob.data.is_editmode:
         cloth.mode = None
     cloth.undo = False
-    rt_('c')
+
     cloth.v_count = len(ob.data.vertices)
     v_count = cloth.v_count
     cloth.obm = get_bmesh(ob, refresh=True)
     cloth.co = get_co_edit(ob)
     
     # slowdowns ------------------
-    rt_('d') # here !!!!!!!!!!   
     manage_vertex_groups(cloth)
-    rt_('e') # here !!!!!!!!!!
     # slowdowns ------------------
 
     cloth.move_dist = np.zeros(v_count, dtype=np.float32) # used by static friction
@@ -4259,9 +4264,7 @@ def refresh(cloth):
     cloth.geometry = get_mesh_counts(ob, cloth.obm)
 
     # slowdowns ------------------
-    rt_('f') # here !!!!!!!!!!
     cloth.sew_springs = get_sew_springs(cloth)
-    rt_('g') # here !!!!!!!!!!!
     # slowdowns ------------------
     
     if False: # need to check if this works. Used by surface forces. search for " rev " in the collision module    
@@ -4284,7 +4287,7 @@ def refresh(cloth):
     cloth.measure_dot = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32) # for calculating the weights of the mean
     cloth.measure_length = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32) # for calculating the weights of the mean
     cloth.vdl = stretch_springs_basic(cloth, cloth.target)
-    rt_('g')
+
     #if doing_self_collisions:
     cloth.tridex = get_tridex_2(ob, mesh=ob.data)
     cloth.sc_edges = get_sc_edges(ob, fake=True)
@@ -4294,9 +4297,8 @@ def refresh(cloth):
     #cloth.surface_offset_tris = np.empty((cloth.tridex.shape[0], 2, 3, 3), dtype=np.float32)
     #cloth.choose_tris = np.empty((cloth.tridex.shape[0], 3, 3), dtype=np.float32)
     cloth.sc_co = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
-    rt_('h')
+
     Collider(cloth)
-    rt_('i')
     
 
 class MCRefreshVertexGroups(bpy.types.Operator):
@@ -4358,16 +4360,12 @@ class MCCreateSewLines(bpy.types.Operator):
         if ob is None:
             ob = bpy.context.object
 
-        #mode = ob.mode
-        #if ob.data.is_editmode:
-            #bpy.ops.object.mode_set(mode='OBJECT')
-
         cloth = MC_data['cloths'][ob['MC_cloth_id']]
+    
+        if ob.data.is_editmode:        
+            bpy.ops.mesh.bridge_edge_loops()
+            bpy.ops.mesh.delete(type='ONLY_FACE')
 
-        #bco = get_co_shape(ob, "Basis")
-
-        #bpy.ops.object.mode_set(mode=mode)
-        #ob.data.update()
         return {'FINISHED'}
 
 

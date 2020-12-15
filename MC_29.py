@@ -2551,6 +2551,61 @@ def update_pins_select_sew_surface(cloth):
     hook_force(cloth)
 
 
+def inflate_and_wind(cloth):
+    skip = True
+    wind = False
+    props = cloth.ob.MC_props
+    inflate = props.inflate * .001
+    if inflate != 0:
+        skip = False
+    
+    wind_vec = np.array([props.wind_x, props.wind_y, props.wind_z], dtype=np.float32)
+    if not np.all(wind_vec == np.array([0.0, 0.0, 0.0], dtype=np.float32)):
+        wind = True
+        skip = False
+    
+    if skip:
+        return
+    
+    t = cloth.co[cloth.tridex]
+    ori = t[:, 0]
+    t1 = t[:, 1] - ori
+    t2 = t[:, 2] - ori
+    
+    # could use norms from wind instead:
+    # norms = cloth.u_norms[trs]
+    norms = np.cross(t1, t2)
+    un = norms / np.sqrt(np.einsum('ij,ij->i', norms, norms))[:, None]
+    cloth.u_norms = un # could feed this to self collisions
+    
+    # inflate:
+    # could put it on a vertex group...
+    move = np.nan_to_num(un * inflate)
+    np.add.at(cloth.velocity, cloth.tridex, move[:, None])
+    
+    # wind:
+    if wind:
+        turb = props.turbulence
+        randir = props.random_direction
+        if cloth.turb_count % 10 == 0:
+            cloth.turb_count = 1
+            cloth.turbulence[:] = (1 + turb) - (np.random.rand(cloth.tridex.shape[0]) * turb)
+            cloth.random_dir_2[:] = cloth.random_dir
+            cloth.random_dir = np.random.rand(3)
+        
+        dif = cloth.random_dir_2 - cloth.random_dir
+        gradual = cloth.random_dir + (dif/cloth.turb_count)
+            
+        vec_turb = (1 + randir) - (gradual * randir)
+        wind_vec = wind_vec * vec_turb
+        
+        angle = np.abs(un @ wind_vec) * cloth.turbulence
+        move = np.nan_to_num(wind_vec * angle[:, None]) * .001
+        np.add.at(cloth.velocity, cloth.tridex, move[:, None])
+        
+        cloth.turb_count += 1
+
+
 def spring_basic_no_sw(cloth):
     
     cloth.select_start[:] = cloth.co
@@ -2584,7 +2639,6 @@ def spring_basic_no_sw(cloth):
     # surface ------------------
     #surface_forces(cloth) # might need to refresh when iterating bend and stretch. Could put it in update_pins_and_select()
     # surface ------------------
-    
     
     #v_move = cloth.co - cloth.vel_zero
 
@@ -2693,7 +2747,8 @@ def spring_basic_no_sw(cloth):
     cloth.velocity += v_move
     cloth.velocity *= 1 - cloth.drag
     cloth.velocity[:,2] += cloth.ob.MC_props.gravity * 0.001 # so after *= vel so it can still fall at zero vel
-    
+    inflate_and_wind(cloth)
+    # for static friction in MC_object_collision.py
     np.einsum('ij,ij->i', cloth.velocity, cloth.velocity, out=cloth.move_dist)
     
     """
@@ -3461,7 +3516,10 @@ def cb_cache(self, context):
 def cb_cache_playback(self, context):
     ob = self.id_data
     cloth = get_cloth(ob)
-
+    
+    if self.play_cache:
+        self.animated = True
+    
     self['cache'] = False
 
     if self.cache_only:
@@ -4018,7 +4076,7 @@ class McPropsObject(bpy.types.PropertyGroup):
 
     # stiffness
     feedback:\
-    bpy.props.FloatProperty(name="Feedback", description="Extrapolate for faster solve", default=1, min= -1000, max=1000, soft_min= 0.0, soft_max=1, precision=3)
+    bpy.props.FloatProperty(name="Feedback", description="Extrapolate for faster solve", default=.5, min= -1000, max=1000, soft_min= 0.0, soft_max=1, precision=3)
 
     stretch_iters:\
     bpy.props.IntProperty(name="Iters", description="Number of iterations of cloth solver", default=2, min=0, max=1000)#, precision=1)
@@ -4131,6 +4189,38 @@ class McPropsObject(bpy.types.PropertyGroup):
     max_frames:\
     bpy.props.IntProperty(name="Max Frames", description="Record this many", default=1000)#, update=cb_cache)
 
+
+    # extras ------->>>
+    # Wind. Note, wind should be measured against normal and be at zero when normals are at zero. Squared should work
+    wind_x:\
+    bpy.props.FloatProperty(name="Wind X", 
+        description="Not the window cleaner", 
+        default=0, precision=4)#, update=refresh_noise_decay)
+
+    wind_y:\
+    bpy.props.FloatProperty(name="Wind Y", 
+        description="Y? Because wind is cool", 
+        default=0, precision=4)#, update=refresh_noise_decay)
+
+    wind_z:\
+    bpy.props.FloatProperty(name="Wind Z", 
+        description="It's windzee outzide", 
+        default=0, precision=4)#, update=refresh_noise_decay)
+
+    turbulence:\
+    bpy.props.FloatProperty(name="Wind Turbulence", 
+        description="Add Randomness to wind strength", 
+        default=.5, precision=4)#, update=refresh_noise_decay)
+
+    random_direction:\
+    bpy.props.FloatProperty(name="Wind Turbulence", 
+        description="Add randomness to wind direction", 
+        default=.5, precision=4)#, update=refresh_noise_decay)
+
+    inflate:\
+    bpy.props.FloatProperty(name="inflate", 
+        description="add force to vertex normals", 
+        default=0, precision=4)
 
 
 # create properties ----------------
@@ -4290,6 +4380,12 @@ def refresh(cloth):
 
     #if doing_self_collisions:
     cloth.tridex = get_tridex_2(ob, mesh=ob.data)
+
+    cloth.turbulence = np.random.rand(cloth.tridex.shape[0])
+    cloth.turbulence_2 = np.random.rand(cloth.tridex.shape[0])
+    cloth.random_dir = np.random.rand(3)
+    cloth.random_dir_2 = np.random.rand(3)
+    cloth.turb_count = 1
     cloth.sc_edges = get_sc_edges(ob, fake=True)
     cloth.sc_eidx = np.arange(len(ob.data.vertices), dtype=np.int32)
     cloth.sc_indexer = np.arange(cloth.tridex.shape[0], dtype=np.int32)
@@ -4910,9 +5006,16 @@ class PANEL_PT_modelingClothSettings(PANEL_PT_MC_Master, bpy.types.Panel):
             col = layout.column(align=True)
             col.scale_y = 1.5
             col.label(text='Forces')
-            col.prop(ob.MC_props, "gravity", text="gravity")
             col.prop(ob.MC_props, "velocity", text="velocity")
+            col.prop(ob.MC_props, "gravity", text="gravity")
+            col.prop(ob.MC_props, "inflate", text="inflate")
+            col.prop(ob.MC_props, "wind_x", text="wind x")
+            col.prop(ob.MC_props, "wind_y", text="wind y")
+            col.prop(ob.MC_props, "wind_z", text="wind z")
+            col.prop(ob.MC_props, "turbulence", text="turbulence")
+            col.prop(ob.MC_props, "random_direction", text="random direction")
 
+            col.label(text='Springs')
             #col.scale_y = 1
             col = layout.column(align=True)
             col.prop(ob.MC_props, "sub_frames", text="Sub Frames")

@@ -517,6 +517,8 @@ def ray_check_obj(sc, ed, trs, cloth):
     t1 = t[:, 4] - ori
     t2 = t[:, 5] - ori
     
+    # could use norms from wind instead:
+    # norms = cloth.u_norms[trs]
     norms = np.cross(t1, t2)
     un = norms / np.sqrt(np.einsum('ij,ij->i', norms, norms))[:, None]
     

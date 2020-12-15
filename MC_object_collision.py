@@ -532,10 +532,11 @@ def object_collisions_7(sc, margin=0.1, cloth=None):
             break
         count += 1    
     
-    print("made it past b2")
+        
+    #print("made it past b2")
     #timer(time.time()-T, 'b2')    
     #if sc.report:
-    if 1:
+    if 0:
         print(len(sc.big_boxes), "how many big boxes")
         print(len(sc.small_boxes), "how many small boxes")
         

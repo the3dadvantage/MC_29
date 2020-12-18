@@ -1033,9 +1033,7 @@ def eq_bend_data(cloth):
     paired[:, 1] = f_rs
 
     # faces grouped left and right
-    t = time.time()
     cloth.face_pairs, idx = pairs_idx(paired)
-    print(time.time()-t)
     cloth.stacked_faces = cloth.face_pairs.T.ravel()
     jfps = cloth.stacked_faces.shape[0]
 
@@ -1098,13 +1096,14 @@ def get_poly_vert_tilers(cloth):
     for i in cloth.swap_faces:
         r = [v.index for v in obm.faces[i].verts]
         cloth.jpv_full += r
-
+    
 
 # abstract bend setup ----------------------------
 # precalculated ------------------------
 def tiled_weights(cloth):
     """Tile the tris with the polys for getting
     barycentric weights"""
+
     if cloth.ob.MC_props.quad_bend:
         obm = cloth.quad_obm
     else:
@@ -1117,28 +1116,40 @@ def tiled_weights(cloth):
     cloth.full_counts = np.array([len(f.verts) for f in obm.faces], dtype=np.int32)
     cloth.full_div = np.array(cloth.full_counts, dtype=np.float32)[cloth.swap_faces][:, None]
     cloth.plot_counts = cloth.full_counts - 2 # used by plotted centers
-
+    
     # joined:
     jfps = cloth.stacked_faces.shape[0]
 
     jsc = cloth.plot_counts[cloth.swap_faces]
     cloth.j_tiler = np.hstack([[i] * jsc[i] for i in range(jfps)])
-
-    if False:
-        cloth.js_tris = cloth.j_tris[cloth.j_tiler]
-
     jscf = cloth.full_counts[cloth.swap_faces]
-    cloth.ab_tiler = np.hstack([[i] * jscf[i] for i in range(jfps)])
-    cloth.sp_ls = np.hstack([[v.index for v in obm.faces[f].verts] for f in cloth.swap_faces])
+
+    ab_tiler_1 = np.array([[i] * jscf[i] for i in range(jfps)])
+    
+    if ab_tiler_1.dtype == 'object':
+        abl = []
+        for i in ab_tiler_1:
+            abl += i
+        cloth.ab_tiler = np.array(abl, dtype=np.int32)
+    else:
+        cloth.ab_tiler = ab_tiler_1.ravel()
+    
+    face_verts = np.array([[v.index for v in f.verts] for f in obm.faces])
+    if face_verts.dtype == 'object':
+        this = []
+        for i in face_verts[cloth.swap_faces]:
+            this += i
+        cloth.sp_ls = np.array(this, dtype=np.int32)
+    else:
+        cloth.sp_ls = face_verts[cloth.swap_faces].ravel()
 
 
 # abstract bend setup ----------------------------
 # precalculated ------------------------
 def triangle_data(cloth):
-
+    
     sco = cloth.sco
     edv = cloth.edv
-
     # joined tris:
     j_tris = np.zeros((cloth.j_tips.shape[0], 3, 3), dtype=np.float32)
     j_tris[:, :2] = sco[cloth.stacked_edv]
@@ -1148,12 +1159,6 @@ def triangle_data(cloth):
 
     # get the tilers for creating tiled weights
     tiled_weights(cloth)
-
-    if False:
-        jw = get_bary_weights(cloth.js_tris, sco[cloth.swap_jpv])
-        cloth.j_plot = np.sum(cloth.js_tris * jw[:,:,None], axis=1)
-        get_j_surface_offset(cloth)
-        cloth.jw = jw
 
     trial = False
     trial = True
@@ -1204,7 +1209,7 @@ def bend_setup(cloth):
     #   add the center of the edge
     #   once at the end
     #   instead of doing it for all three
-    rt_()
+    #rt_()
     if cloth.ob.MC_props.quad_bend:
         cloth.quad_obm = get_quad_obm(cloth.ob)
         cloth.quad_obm.faces.ensure_lookup_table()
@@ -1214,11 +1219,15 @@ def bend_setup(cloth):
 
     cloth.source_centers = np.copy(cloth.center_data[0]) # so we can overwrite the centers array when dynamic
     eq_bend_data(cloth)
+    #rt_('1')
     get_poly_vert_tilers(cloth)
+    #rt_('2')    
     get_eq_tri_tips(cloth, cloth.sco, cloth.source_centers)
+    #rt_('3')    
     triangle_data(cloth)
+    #rt_('4')
     ab_setup(cloth)
-    rt_('inside bend')
+    #rt_('5')
 
 # abstract bend setup ----------------------------
 # dynamic ------------------------------
@@ -1583,115 +1592,99 @@ def virtual_springs(cloth):
 
 
 def get_sew_springs(cloth):
-    
+    """Creates data fo using add.at with average locations
+    of sew verts. Groups areas using a sort of tree where
+    multiple edges would bring sew verts together."""
     rt_()
-    obm = cloth.obm
-    obm.edges.ensure_lookup_table()
-    cloth.sew_edges = [e.index for e in obm.edges if len(e.link_faces) == 0]
+    
+    obm = cloth.obm    
     cloth.sew = True
-    if len(cloth.sew_edges) == 0:
-        cloth.sew = False
-        return
-    
-    sew_verts = np.array([[v.index for v in obm.edges[e].verts] for e in cloth.sew_edges])
-    uni, inverse, counts = np.unique(sew_verts.ravel(), return_counts=True, return_inverse=True)
-    sew_counts = counts[inverse]
-    sew_counts.shape = sew_verts.shape
-    
-    summed = np.sum(sew_counts, axis=1)
-    
-    multi = summed > 2
+    cull = []
+    pairs = [] # edge indices of singe sew edges
+    groups = []
 
-    groups = None
-    if np.any(multi):
-        sew_pairs = sew_verts[~multi]
-        sew_verts = sew_verts[multi]
-
-        booly = np.ones(sew_verts.shape[0], dtype=np.bool)
-        idxer = np.arange(sew_verts.shape[0], dtype=np.int32)
-
-        groups = []
-        for i in range(sew_verts.shape[0]):
-            
-            sw = sew_verts[i]
-            joined = [sw[0], sw[1]]
-            booly[0] = False
-            for id, sw2 in zip(idxer[booly], sew_verts[booly]):
+    for e in obm.edges:
+        if len(e.link_faces) == 0:
+            if e.index not in cull:
+                cull += [e.index]
                 
-                if np.any(np.in1d(sw, sw2)):
-                    joined += sw2.tolist()
-                    booly[id] = False
+                v1 = e.verts[0]
+                le1 = [ed.index for ed in v1.link_edges if (ed.index not in cull) & (len(ed.link_faces) == 0)]
+                cull += le1
                 
-            uni = np.unique(joined)
-            if uni.shape[0] > 2:
-                groups.append(uni)
+                v2 = e.verts[1]
+                le2 = [ed.index for ed in v2.link_edges if (ed.index not in cull) & (len(ed.link_faces) == 0)]
+                cull += le2
 
-        sew_verts = np.array(groups)
+                if len(le1 + le2) == 0:
+                    pairs += [e.index]
+                    continue
 
-        booly = np.ones(sew_verts.shape[0], dtype=np.bool)
-        idxer = np.arange(sew_verts.shape[0], dtype=np.int32)
+                eg = []
+                eg += le1
+                eg += le2
+                keep_going = True
+                
+                itg = eg
+                while len(itg) != 0:
+                    for ee in itg:
 
-        groups = []
-        for i in range(sew_verts.shape[0]):
-            if booly[i]:
-                sw = sew_verts[i]
-                joined = sw.tolist()
-                booly[0] = False
-                for id, sw2 in zip(idxer[booly], sew_verts[booly]):
+                        cull += [ee]
+                        
+                        v1 = obm.edges[ee].verts[0]
+                        le1 = [ed.index for ed in v1.link_edges if (ed.index not in cull) & (len(ed.link_faces) == 0)]
+                        cull += le1
+                        
+                        v2 = obm.edges[ee].verts[1]
+                        le2 = [ed.index for ed in v2.link_edges if (ed.index not in cull) & (len(ed.link_faces) == 0)]
+                        cull += le2
+                        merge = le1 + le2
 
-                    if np.any(np.in1d(sw, sw2)):
-                        joined += sw2.tolist()
-                        booly[id] = False
+                        if len(merge) == 0:
+                            keep_going = False
+
+                        itg = merge
+                        eg += merge
+
+                eg += [e.index]
+                groups.append(eg)
+                
+    
+    if len(pairs) == 0:
+        if len(groups) == 0:    
+            cloth.sew = False
+            return
                     
-                uni = np.unique(joined)
-                groups.append(uni)
+    e_count = len(cloth.ob.data.edges)
+    eidx = np.empty((e_count, 2), dtype=np.int32)
+    cloth.ob.data.edges.foreach_get('vertices', eidx.ravel())
     
-    if groups is None:
-        groups = []
-        sew_pairs = sew_verts
-
-    mean_count = len(groups) + sew_pairs.shape[0]
+    sew_pairs_v = eidx[pairs].ravel().tolist()
+    sew_groups_v = []
     
-    sew_mean = np.zeros((mean_count, 3), dtype=np.float32)
-    
-    x = np.arange(sew_pairs.shape[0])
-    pair_idx = np.concatenate((x[:,None], x[:, None]), 1).ravel()
-    
-    gidx = []
-
-    count = sew_pairs.shape[0]
-    for i in groups:
-        c = len(i)
-        gidx += ([count] * c)
+    indexer = []
+    divs = []
+    for i, g in enumerate(groups):
+        temp = []
+        for v in eidx[g].ravel(): # compare to unique, unique was slower!!
+            if v not in temp:
+                temp += [v]
         
-        count += 1
-        
-    sew_mean_idx = pair_idx.tolist() + gidx
+        sew_groups_v += temp
+        lt = len(temp)
+        divs += [lt]
+        indexer += [i] * lt
     
-    div = np.array(([2] * sew_pairs.shape[0]) + [len(g) for g in groups], dtype=np.float32)[:, None]
+    pidx1 = np.arange(len(pairs))
+    pidx = np.repeat(pidx1, 2) + (len(groups))
+
+    count = len(groups) + len(pairs)
+    cloth.sew_mean = np.zeros((count, 3), dtype=np.float32)
+    cloth.all_sew = sew_groups_v + sew_pairs_v
+    cloth.sew_mean_idx = indexer + pidx.tolist()
+    cloth.sew_div = np.array(divs + ([2] * len(pairs)),dtype=np.float32)[:, None]
+    rt_('time to sew')
     
-    if len(groups) == 0:
-        all_sew = sew_pairs.ravel().tolist()
-    else:
-        all_sew = sew_pairs.ravel().tolist() + np.hstack(groups).tolist()
-
-    co = np.array([v.co for v in obm.verts], dtype=np.float32)
-    
-    cloth.sew_mean = sew_mean
-    cloth.sew_mean_idx = sew_mean_idx    
-    cloth.all_sew = all_sew
-    cloth.sew_div = div
-
-    np.add.at(cloth.sew_mean, cloth.sew_mean_idx, co[cloth.all_sew])
-    means = sew_mean / cloth.sew_div
-    vecs = (means[sew_mean_idx] - co[all_sew]) * cloth.ob.MC_props.sew_force
-
-    cloth.sew_pairs = sew_pairs
-    cloth.sew_groups = groups
-
-    rt_('end sew')
-    return sew_pairs, groups
-
 
 def hook_force(cloth):
     id = cloth.ob['MC_cloth_id']
@@ -1719,13 +1712,11 @@ def sew_force(cloth):
 def get_springs_2(cloth):
     """Create index for viewing stretch springs"""
 
-    rt_()
     obm = cloth.obm
 
     if not cloth.do_stretch:
         return
 
-    TT = time.time()
     ed = []
     for v in obm.verts:
         if cloth.linear_cull[v.index]:
@@ -1741,7 +1732,6 @@ def get_springs_2(cloth):
     cloth.basic_set = np.array(ed)
     cloth.basic_v_fancy = cloth.basic_set[:,0]
     cloth.stretch_group_mult = cloth.stretch_group[cloth.basic_v_fancy]
-    rt_('get springs 2')
 
 
 # ^                                                          ^ #
@@ -1819,7 +1809,7 @@ class Collider():
 
     def __init__(self, cloth=None):
         
-        print('----------__init__-----------')
+        #print('----------__init__-----------')
         
         colliders = [o for o in bpy.data.objects if (o.MC_props.collider) & (o != cloth.ob)]
         if len(colliders) == 0:
@@ -2775,8 +2765,6 @@ def spring_basic_no_sw(cloth):
     # !!! self collide is running after velocity without updating cloth.co
     # !!! Look at the "v_move" variable above !!!
     
-    #print(time.time()-t, "total self collide time")
-    
     # add in object collisions
     # cloth.velocity[cloth.oc_move_idx] -= cloth.oc_move
 
@@ -2918,7 +2906,6 @@ def spring_basic(cloth):
                 if su:
                     pure_linear(cloth, data)
             #seam_position(cloth, data) # cant do this without caclulating vps
-    #print(time.time() - t)
 
 
 # update the cloth ---------------
@@ -3667,7 +3654,7 @@ def cb_cloth(self, context):
         MC_data['cloths'][id_number] = cloth
         ob['MC_cloth_id'] = id_number
         #cb_cache(self, context) # if a cache exists at the specified file location. So the usere doesn't have to toggle the property if the file is a valid cache.
-        print('created instance')
+        #print('created instance')
         return
 
     # when setting cloth to False
@@ -3915,7 +3902,6 @@ def cb_animated(self, context):
         ob.update_from_editmode()
 
     cloth.co = get_co_shape(ob, key='MC_current')
-    update_groups(cloth, None)
 
 
 # calback functions ----------------

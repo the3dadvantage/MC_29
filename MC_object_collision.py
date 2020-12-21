@@ -481,7 +481,6 @@ def object_collisions_7(sc, margin=0.1, cloth=None):
     sc.tzmax = tzmax
     sc.tzmin = tzmin
 
-
     # edge bounds:
     ex = sc.edges[:, :, 0]
     ey = sc.edges[:, :, 1]
@@ -498,9 +497,9 @@ def object_collisions_7(sc, margin=0.1, cloth=None):
     #timer(time.time()-T, "self col 5")
     # !!! can do something like check the octree to make sure the boxes are smaller
     #       to know if we hit a weird case where we're no longer getting fewer in boxes
-    
+    #sc.box_max = 150
     tfull, efull, bounds = octree_et(sc, margin=0.0, cloth=cloth)
-    #print([b.shape for b in tfull], "this is tfull")
+
     T = time.time()
     for i in range(len(tfull)):
         t = tfull[i]
@@ -515,26 +514,32 @@ def object_collisions_7(sc, margin=0.1, cloth=None):
             # !!! instead of passing bounds could figure out the min and max in the tree every time
             #       we divide. So divide the left and right for example then get the new bounds for
             #       each side and so on...
-    
-    #timer(time.time()-T, 'sort boxes')
-    T = time.time()
+
+    sizes = [b[1].shape[0] for b in sc.big_boxes]
+    if len(sizes) > 0:    
+        check = max(sizes)
     
     limit = 6
     count = 1
-    #sc.report = True
+
+    done = False
     while len(sc.big_boxes) > 0:
         b2(sc, cloth, count)
-        #if sc.report:    
-            #print("recursion level:", count)
+
+        sizes2 = [b[1].shape[0] for b in sc.big_boxes]
+        if len(sizes2) > 0:
+            if check / max(sizes2) < 1.5:
+                done = True
+        
         if count == limit:
+            done = True
+                    
+        if done:
             for b in sc.big_boxes:
                 sc.small_boxes.append(b)
             break
         count += 1    
-    
-        
-    #print("made it past b2")
-    #timer(time.time()-T, 'b2')    
+
     #if sc.report:
     if 0:
         print(len(sc.big_boxes), "how many big boxes")

@@ -111,7 +111,7 @@ def reload():
     """!! for development !! Resets everything"""
     # when this is registered as an addon I will want
     #   to recaluclate these objects not set prop to false
-
+    
     # Set all props to False:
     reload_props = ['continuous', 'collider', 'animated', 'cloth', 'cache', 'cache_only', 'play_cache']
     if 'MC_props' in dir(bpy.types.Object):
@@ -128,6 +128,11 @@ def reload():
     #for detecting deleted colliders or cloths
     MC_data['cloth_count'] = 0
     MC_data['collider_count'] = 0
+    
+    try:
+        soft_unregister()    
+    except:
+        print("failed to run soft_unregister")    
 
 
 def np_co_to_text(ob, co, rw='w', cloth=None):
@@ -338,7 +343,6 @@ def cache(cloth, keying=False):
 
     nonexistent = not txt.exists()
 
-    #np.savetxt(txt, cloth.co)
     if (nonexistent | ob.MC_props.overwrite_cache):
         np.savetxt(txt, cloth.co)
         print('saved a cache file: ', txt)
@@ -374,7 +378,7 @@ def play_cache(cloth, cb=False):
     txt = fp.joinpath(str(f))
 
     if txt.exists():
-        cloth.co = np.loadtxt(txt)
+        cloth.co = np.loadtxt(txt, dtype=np.float32)
 
     key = 'MC_current'
     # cache only playback
@@ -1209,7 +1213,7 @@ def bend_setup(cloth):
     #   add the center of the edge
     #   once at the end
     #   instead of doing it for all three
-    #rt_()
+    rt_()
     if cloth.ob.MC_props.quad_bend:
         cloth.quad_obm = get_quad_obm(cloth.ob)
         cloth.quad_obm.faces.ensure_lookup_table()
@@ -1219,15 +1223,15 @@ def bend_setup(cloth):
 
     cloth.source_centers = np.copy(cloth.center_data[0]) # so we can overwrite the centers array when dynamic
     eq_bend_data(cloth)
-    #rt_('1')
+    rt_('1')
     get_poly_vert_tilers(cloth)
-    #rt_('2')    
+    rt_('2')    
     get_eq_tri_tips(cloth, cloth.sco, cloth.source_centers)
-    #rt_('3')    
+    rt_('3')    
     triangle_data(cloth)
-    #rt_('4')
+    rt_('4')
     ab_setup(cloth)
-    #rt_('5')
+    rt_('5')
 
 # abstract bend setup ----------------------------
 # dynamic ------------------------------
@@ -4761,9 +4765,11 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
             #row.prop(ob.MC_props, "self_collide_force", text="SC Force", icon='CON_PIVOT')
             row = col.row()            
             row = col.row()
-            row.label(icon='CON_PIVOT')
-            row.scale_y = 0.75            
-            row.prop(ob.MC_props, "sc_box_max", text="Box Size", icon='CON_PIVOT')
+            
+            # show the box max for collision stuff
+            #row.label(icon='CON_PIVOT')
+            #row.scale_y = 0.75            
+            #row.prop(ob.MC_props, "sc_box_max", text="Box Size", icon='CON_PIVOT')
 
 
         # use current mesh or most recent cloth object if current ob isn't mesh
@@ -5212,7 +5218,33 @@ def unregister():
     for i in idx_to_kill[::-1]:
         del(bpy.app.handlers.load_post[i])
         
+def soft_unregister():
+    # props
+    del(bpy.types.Scene.MC_props)
+    del(bpy.types.Object.MC_props)
+
+    # clean dead versions of the undo handler
+    handler_names = np.array([i.__name__ for i in bpy.app.handlers.undo_post])
+    booly = [i == 'undo_frustration' for i in handler_names]
+    idx = np.arange(handler_names.shape[0])
+    idx_to_kill = idx[booly]
+    for i in idx_to_kill[::-1]:
+        del(bpy.app.handlers.undo_post[i])
+
+    handler_names = np.array([i.__name__ for i in bpy.app.handlers.load_post])
+    booly = [i == 'reload_from_save' for i in handler_names]
+    idx = np.arange(handler_names.shape[0])
+    idx_to_kill = idx[booly]
+
+    for i in idx_to_kill[::-1]:
+        del(bpy.app.handlers.load_post[i])
+
 
 if __name__ == "__main__":
+    #unregister()
     reload()
     register()
+    
+    
+    
+print('--------------- new ---------------')

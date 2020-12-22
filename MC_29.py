@@ -1819,15 +1819,20 @@ class Collider():
         if len(colliders) == 0:
             return
 
-        vcs = [len(c.data.vertices) for c in colliders]
+        #vcs = [len(c.data.vertices) for c in colliders]
+        
+        abc_prox = [absolute_co(c) for c in colliders]
+        vcs = [len(p[1].vertices) for p in abc_prox]
+        
         
         total_v_count = np.sum(vcs)
         cloth.total_co = np.empty((total_v_count, 3), dtype=np.float32)
-        
+
         # have to initalize total_co and last_co for objects
-        colliders = [o for o in bpy.data.objects if (o.MC_props.collider) & (cloth.ob != o)]
+        #colliders = [o for o in bpy.data.objects if (o.MC_props.collider) & (cloth.ob != o)]
         #oms = [c.MC_props.outer_margin for c in colliders]
-        vcs = [len(c.data.vertices) for c in colliders]
+        
+        #vcs = [len(c.data.vertices) for c in colliders]
         shift = 0
         for i, c in enumerate(colliders):
             abco, proxy = absolute_co(c)        
@@ -2678,10 +2683,11 @@ def spring_basic_no_sw(cloth):
                 if o.data.is_editmode:
                     o.update_from_editmode()
             
-            vcs = [len(c.data.vertices) for c in colliders]
+            abc_prox = [absolute_co(c) for c in colliders]
+            vcs = [len(p[1].vertices) for p in abc_prox]
 
             if ob_settings:    
-                fcs = [len(c.data.polygons) for c in colliders]
+                fcs = [len(p[1].polygons) for p in abc_prox]
                 oms = [c.MC_props.outer_margin for c in colliders]
                 frs = [c.MC_props.oc_friction for c in colliders]
                 sfrs = [c.MC_props.static_friction  * .0001 for c in colliders]
@@ -2697,7 +2703,8 @@ def spring_basic_no_sw(cloth):
                 for i, c in enumerate(colliders):
                     
                     # could optimize by storing proxy and co...
-                    abco, proxy = absolute_co(c)
+                    #abco, proxy = absolute_co(c)
+                    abco, proxy = abc_prox[i]
 
                     normals = get_proxy_normals(ob=c, proxy=proxy)
                     normals = apply_rotation(c, normals) # could put the collider proxy on an object and copy the world matrix over maybe? Not sure...

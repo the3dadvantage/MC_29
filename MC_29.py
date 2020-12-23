@@ -1858,20 +1858,24 @@ class Collider():
         sfrs = [c.MC_props.static_friction  * .0001 for c in colliders]
         
         shift = 0
+        cloth.oc_tri_counts = []
         for i, c in enumerate(colliders):
             if c.data.is_editmode:
                 c.update_from_editmode()
 
             abco, proxy = absolute_co(c)
-            oc_total_tridex = np.append(oc_total_tridex, get_tridex_2(ob=None, mesh=proxy) + shift, axis=0)
+            gt2 = get_tridex_2(ob=None, mesh=proxy)
+            cloth.oc_tri_counts.append(gt2.shape[0])
+            oc_total_tridex = np.append(oc_total_tridex, gt2 + shift, axis=0)
             shift = vcs[i]
                 
         #fcs = [len(c.data.polygons) for c in colliders]
         fcs = oc_total_tridex.shape[0]
-        total_f_count = np.sum(fcs)
-        cloth.total_margins = np.zeros(total_f_count, dtype=np.float32)[:, None]
-        cloth.total_friction = np.ones(total_f_count, dtype=np.float32)[:, None]
-        cloth.total_static = np.zeros(total_f_count, dtype=np.float32)
+        #total_f_count = np.sum(fcs)
+        print(fcs, "this is total fcs")
+        cloth.total_margins = np.zeros(fcs, dtype=np.float32)[:, None]
+        cloth.total_friction = np.ones(fcs, dtype=np.float32)[:, None]
+        cloth.total_static = np.zeros(fcs, dtype=np.float32)
         
         cloth.oc_total_tridex = oc_total_tridex
         cloth.oc_indexer = np.arange(oc_total_tridex.shape[0], dtype=np.int32)
@@ -2665,19 +2669,19 @@ def spring_basic_no_sw(cloth):
 
             # make a prop for this in settings    
             ob_settings = not cloth.ob.MC_props.override_settings
-            if ob_settings:
-                cloth.OM = max([o.MC_props.outer_margin for o in colliders])
-                cloth.static_threshold = max([o.MC_props.static_friction for o in colliders]) * .0001
-                cloth.object_friction = max([o.MC_props.oc_friction for o in colliders])
+            #if ob_settings:
+                #cloth.OM = max([o.MC_props.outer_margin for o in colliders])
+                #cloth.static_threshold = max([o.MC_props.static_friction for o in colliders]) * .0001
+                #cloth.object_friction = max([o.MC_props.oc_friction for o in colliders])
                 # prolly should create a function here that
                 #   sets these per object. Will have to use
                 #   collision index to get the values.
                 #   could even use vertex groups both on the cloth
                 #   and on the colliders...
-            else:    
-                cloth.OM = cloth.ob.MC_props.outer_margin
-                cloth.static_threshold = cloth.ob.MC_props.static_friction * .0001            
-                cloth.object_friction = cloth.ob.MC_props.oc_friction
+            #else:    
+            cloth.OM = cloth.ob.MC_props.outer_margin
+            cloth.static_threshold = cloth.ob.MC_props.static_friction * .0001            
+            cloth.object_friction = cloth.ob.MC_props.oc_friction
             
             for o in colliders:
                 if o.data.is_editmode:
@@ -2687,7 +2691,8 @@ def spring_basic_no_sw(cloth):
             vcs = [len(p[1].vertices) for p in abc_prox]
 
             if ob_settings:    
-                fcs = [len(p[1].polygons) for p in abc_prox]
+                #fcs = [len(p[1].polygons) for p in abc_prox]
+                fcs = cloth.oc_tri_counts  #[len(p[1].polygons) for p in abc_prox]
                 oms = [c.MC_props.outer_margin for c in colliders]
                 frs = [c.MC_props.oc_friction for c in colliders]
                 sfrs = [c.MC_props.static_friction  * .0001 for c in colliders]
@@ -2712,7 +2717,7 @@ def spring_basic_no_sw(cloth):
                     if ob_settings:
                         surface_offset = normals * oms[i]
                     else:    
-                        surface_offset = normals * cloth.OM
+                        surface_offset = normals * cloth.ob.MC_props.outer_margin
                     
                     cloth.total_co[shift: shift+vcs[i]] = abco + surface_offset
                     
@@ -2722,8 +2727,7 @@ def spring_basic_no_sw(cloth):
                         cloth.total_margins[f_shift: f_shift+fcs[i]] = oms[i]
                         cloth.total_friction[f_shift: f_shift+fcs[i]] = frs[i]
                         cloth.total_static[f_shift: f_shift+fcs[i]] = sfrs[i]
-                        f_shift = fcs[i]        
-
+                        f_shift = fcs[i]
             
             # checing if the colliders move...
             if False:    
@@ -4340,7 +4344,10 @@ def refresh(cloth):
     cloth.v_count = len(ob.data.vertices)
     v_count = cloth.v_count
     cloth.obm = get_bmesh(ob, refresh=True)
-    cloth.co = get_co_edit(ob)
+    
+    #noise = np.array(np.random.random((cloth.v_count, 3)) * 0.00001, dtype=np.float32)
+
+    cloth.co = get_co_edit(ob)# + noise
     
     # slowdowns ------------------
     manage_vertex_groups(cloth)

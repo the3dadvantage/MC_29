@@ -1905,6 +1905,7 @@ class Collider():
         
         """ !!!!! There is a bug where any empty causes it to break !!!!!"""
 
+
 # cloth instance ---------------
 class Cloth(object):
     # The cloth object
@@ -2641,8 +2642,8 @@ def spring_basic_no_sw(cloth):
         cloth.feedback[:] = cloth.co
         for i in range(cloth.ob.MC_props.stretch_iters):
             stretch_solve(cloth)
-            if i > 0:
-                update_pins_select_sew_surface(cloth)
+            #if i > 0:
+            update_pins_select_sew_surface(cloth)
         spring_move = cloth.co - cloth.feedback
         cloth.velocity += spring_move * feedback_val
     
@@ -2743,7 +2744,9 @@ def spring_basic_no_sw(cloth):
                         f_shift = fcs[i]
             
             # checing if the colliders move...
-            if False:    
+            static_check = True
+            #static_check = False
+            if static_check:
                 ccdif = cloth.last_co - cloth.total_co
                 cloth.static = False
                 if np.all(ccdif == 0):
@@ -2758,17 +2761,15 @@ def spring_basic_no_sw(cloth):
             if cloth.ob.MC_props.new_sc:
                 sc_mesh(cloth)
             
-            MC_object_collision.detect_collisions(cloth)
-
+            # update collision objects coords:
             
+            MC_object_collision.detect_collisions(cloth)
+            
+            cloth.last_co[:] = cloth.total_co
+
     # object collistion ---------------------------
     
     update_pins_select_sew_surface(cloth) # also hooks
-    
-    # !!! should this be done after velocity is added ???
-    if False:
-        if cloth.ob.MC_props.detect_collisions:
-            cloth.last_co[:] = cloth.total_co # for checking if the collider moved
     
     v_move = cloth.co - cloth.vel_zero
     
@@ -4436,7 +4437,7 @@ class SelfCollider():
             cloth.total_co[shift: shift+vcs[i]] = abco + surface_offset
             shift = vcs[i]
 
-        cloth.last_co = np.copy(cloth.total_co) # for checing if the collider moved
+        cloth.last_co = np.copy(cloth.total_co)
             
         oc_total_tridex = np.empty((0,3), dtype=np.int32)
 

@@ -239,8 +239,8 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     mid, bounds_8 = generate_bounds(b_min, b_max, margin)
     
     #mid = b_min + ((b_max - b_min) / 2)
-    mid_ = mid + margin
-    _mid = mid - margin
+    mid_ = mid# + margin
+    _mid = mid# - margin
 
     x_, y_, z_ = mid_[0], mid_[1], mid_[2]
     _x, _y, _z = _mid[0], _mid[1], _mid[2]
@@ -372,6 +372,10 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
     
     T = time.time()
 
+
+    margin = 0.0
+    #margin = cloth.ob.MC_props.self_collide_margin
+
     tx = sc.tris[:, :, 0]
     ty = sc.tris[:, :, 1]
     tz = sc.tris[:, :, 2]
@@ -399,6 +403,9 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
     ey = sc.edges[:, :, 1]
     ez = sc.edges[:, :, 2]
 
+    margin = 0.0
+    #margin = cloth.ob.MC_props.self_collide_margin
+
     sc.exmin = np.min(ex, axis=1) - margin
     sc.eymin = np.min(ey, axis=1) - margin
     sc.ezmin = np.min(ez, axis=1) - margin
@@ -407,6 +414,7 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
     sc.eymax = np.max(ey, axis=1) + margin
     sc.ezmax = np.max(ez, axis=1) + margin
         
+    #margin = 0.0
     #timer(time.time()-T, "self col 5")
     # !!! can do something like check the octree to make sure the boxes are smaller
     #       to know if we hit a weird case where we're no longer getting fewer in boxes
@@ -455,6 +463,8 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
 
         if ed.shape[0] == 0:
             continue
+            
+        cloth.ob.data.update()
         
         tris = sc.tris[trs]
         eds = sc.edges[ed]
@@ -498,52 +508,6 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
             sc.ees += re.tolist()
             sc.trs += rt.tolist()
 
-def ray_check_obj(sc, ed, trs, cloth):
-    
-    
-    # ed is a list object so we convert it for indexing the points
-    # trs indexes the tris
-    edidx = np.array(ed, dtype=np.int32)
-    
-    # e is the start co and current co of the cloth paird in Nx2x3    
-    e = sc.edges[ed]
-
-    t = sc.tris[trs]
-    
-    start_co = e[:, 0]
-    co = e[:, 1]
-    
-    ori = t[:, 3]
-    t1 = t[:, 4] - ori
-    t2 = t[:, 5] - ori
-    
-    # could use norms from wind instead:
-    # norms = cloth.u_norms[trs]
-    norms = np.cross(t1, t2)
-    un = norms / np.sqrt(np.einsum('ij,ij->i', norms, norms))[:, None]
-    
-    vecs = co - ori
-    dots = np.einsum('ij,ij->i', vecs, un)
-    
-    switch = dots < 0
-    
-    check, weights = inside_triangles(t[:, :3][switch], co[switch], margin= -sc.M)
-    start_check, start_weights = inside_triangles(t[:, :3][switch], start_co[switch], margin= -sc.M)
-    travel = un[switch][check] * -dots[switch][check][:, None]
-
-    weight_plot = t[:, 3:][switch][check] * start_weights[check][:, :, None]
-
-    loc = np.sum(weight_plot, axis=1)
-    
-    pcols = edidx[switch][check]
-    cco = sc.fco[pcols]
-    pl_move = loc - cco
-
-    fr = cloth.ob.MC_props.sc_friction
-    move = (travel * (1 - fr)) + (pl_move * fr)
-    #rev = revert_rotation(cloth.ob, move)
-    cloth.co[pcols] += move * .5
-
 
 def ray_check_oc(sc, ed, trs, cloth):
     
@@ -585,9 +549,6 @@ def ray_check_oc(sc, ed, trs, cloth):
     direction *= switch
     in_margin = (abs_dots <= M) | (switch == -1)
     
-    
-    
-
     check_1, weights = inside_triangles(t[:, 3:][in_margin], co[in_margin], margin= -0.1)
     start_check, start_weights_1 = inside_triangles(t[:, :3][in_margin], start_co[in_margin], margin= 0.0)
 
@@ -660,14 +621,19 @@ def ray_check_oc(sc, ed, trs, cloth):
         move = (travel * (1 - fr)) + (pl_move * fr)
         move /= div[:, None]
 
-        move *= .25
+        #move *= .9
         
         np.add.at(cloth.co, co_idx, move)
         
+        #move *= .1
+        
         back_tris = True
+        back_tris = False
         if back_tris:
             tridex = cloth.tridex[tidx[in_margin][check]]
             np.subtract.at(cloth.co, tridex.ravel(), np.repeat(move, 3, axis=0))
+        
+        
         return
 
 

@@ -4998,15 +4998,15 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
                 #row.scale_y = 0.75            
                 #row.prop(ob.MC_props, "self_collide_force", text="SC Force", icon='CON_PIVOT')
                 row = col.row()            
-                row = col.row()
-            col.prop(ob.MC_props, "new_sc", text="New Self Collision", icon='FULLSCREEN_EXIT')
-            if ob.MC_props.new_sc:
-                row = col.row()
+                #row = col.row()
+            #col.prop(ob.MC_props, "new_sc", text="New Self Collision", icon='FULLSCREEN_EXIT')
+            #if ob.MC_props.new_sc:
+                #row = col.row()
                 #col = layout.column(align=True)
-                row.scale_y = 0.75
-                row.label(icon='PROP_CON')
-                row.prop(ob.MC_props, "new_self_margin", text="SC Margin", icon='PROP_CON')
-                row = col.row()
+                #row.scale_y = 0.75
+                #row.label(icon='PROP_CON')
+                #row.prop(ob.MC_props, "new_self_margin", text="SC Margin", icon='PROP_CON')
+                #row = col.row()
                 #row.label(icon='CON_PIVOT')
                 #row.scale_y = 0.75            
                 #row.prop(ob.MC_props, "sc_friction", text="Friction", icon='CON_PIVOT')            

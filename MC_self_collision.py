@@ -127,17 +127,16 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs):
 
     w = 1 - (u+v)
     # !!!! needs some thought
-    #margin = 0.0
+    margin = -0.0
     # !!!! ==================
     weights = np.array([w, u, v]).T
-    check = (u > margin) & (v > margin) & (w > margin)
+    check = (u >= margin) & (v >= margin) & (w >= margin)
     
     return check, weights
 
 
-def b2(sc, cloth):
-
-    
+def b2(sc, cloth, count):
+    print('runing b2 self_collisions', count)
     if len(sc.big_boxes) == 0:
         print("ran out")
         return
@@ -161,7 +160,7 @@ def b2(sc, cloth):
             else:
                 boxes.append([t, e, [bmin, bmax]])            
     sc.big_boxes = boxes
-    
+        
 
 def generate_bounds(minc, maxc, margin):
     """from a min corner and a max corner
@@ -219,8 +218,9 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     phase collision culling. et does edges and tris.
     Also groups edges in boxes.""" # first box is based on bounds so first box could be any shape rectangle
 
-    T = time.time()
+    #T = time.time()
     margin = sc.M # might be faster than >=, <=
+    margin = 0.0 # might be faster than >=, <=
     #margin = .001 # might be faster than >=, <=
     
     co = cloth.sc_co
@@ -421,7 +421,7 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
     
     tfull, efull, bounds = octree_et(sc, margin=0.0, cloth=cloth)
 
-    T = time.time()
+    #T = time.time()
     for i in range(len(tfull)):
         t = tfull[i]
         e = efull[i]
@@ -439,13 +439,26 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
     #timer(time.time()-T, 'sort boxes')
     #T = time.time()
     
-    limit = 3
-    count = 0
+    sizes = [b[1].shape[0] for b in sc.big_boxes]
+    if len(sizes) > 0:    
+        check = max(sizes)
+    
+    limit = 6
+    count = 1
+
+    done = False
     while len(sc.big_boxes) > 0:
-        b2(sc, cloth)
-        if sc.report:    
-            print("recursion level:", count)
-        if count > limit:
+        b2(sc, cloth, count)
+
+        sizes2 = [b[1].shape[0] for b in sc.big_boxes]
+        if len(sizes2) > 0:
+            if check / max(sizes2) < 1.5:
+                done = True
+        
+        if count == limit:
+            done = True
+                    
+        if done:
             for b in sc.big_boxes:
                 sc.small_boxes.append(b)
             break
@@ -514,6 +527,12 @@ def ray_check_oc(sc, ed, trs, cloth):
     eidx = np.array(ed, dtype=np.int32)
     tidx = np.array(trs, dtype=np.int32)
 
+    undo_shift = True
+    if undo_shift:
+        sc.tris[:, :3] = cloth.select_start[cloth.tridex]# - shift)[cloth.tridex]
+        sc.tris[:, 3:] = cloth.co[cloth.tridex]# + shift)[cloth.tridex]
+             
+
     e = sc.edges[eidx]
     t = sc.tris[tidx]
 
@@ -552,89 +571,53 @@ def ray_check_oc(sc, ed, trs, cloth):
     check_1, weights = inside_triangles(t[:, 3:][in_margin], co[in_margin], margin= -0.1)
     start_check, start_weights_1 = inside_triangles(t[:, :3][in_margin], start_co[in_margin], margin= 0.0)
 
-    check = check_1 | start_check
+    #check = check_1 | start_check
+    check = check_1# | start_check
+    #check[:] = True
     start_weights = start_weights_1[check]
 
     weight_plot = t[:, 3:][in_margin][check] * start_weights[:, :, None]
-    if False: # using start weight    
-        weight_plot = t[:, 3:][in_margin][check] * start_weights[:, :, None]
-    if False: # trying loc with start normals...    
-        loc = np.sum(weight_plot, axis=1) + ((un[in_margin][check] * M) * direction[in_margin][check][:, None])
-    loc = np.sum(weight_plot, axis=1) + ((u_start_norms[in_margin][check] * M) * direction[in_margin][check][:, None])
+
+    loc = np.sum(weight_plot, axis=1) + ((un[in_margin][check] * M) * direction[in_margin][check][:, None])
     
     co_idx = eidx[in_margin][check]
 
-    if False: # start norms (seems to make no difference...)   
-        travel = -(un[in_margin][check] * dots[in_margin][check][:, None]) + ((un[in_margin][check] * M) * direction[in_margin][check][:, None])
     travel = -(u_start_norms[in_margin][check] * dots[in_margin][check][:, None]) + ((u_start_norms[in_margin][check] * M) * direction[in_margin][check][:, None])
     #start_check, start_weights = inside_triangles(t[:, :3][in_margin][check], co[in_margin][check], margin= -0.1)
     #move = cloth.co[co_idx] - start_co_loc
     
-    #now in theory I can use the weights from start tris 
+    #now in theory I can use the weights from start tris
+        
+    lens = np.sqrt(np.einsum('ij,ij->i', travel, travel))
+    uni, inv, counts = np.unique(co_idx, return_inverse=True, return_counts=True)
+    stretch_array = np.zeros(uni.shape[0], dtype = np.float32)
+    np.add.at(stretch_array, inv, lens)
+    weights = lens / stretch_array[inv]
+    travel *= (weights[:, None] * .777)            
 
-    
-    if False: # moving tris away
-
-        travel *= 0.5
-        tridex = cloth.tridex[tidx[in_margin][check]]
-        #cloth.co[tridex] -= travel[:, None]
-        
-        tridex = cloth.tridex[tidx[in_margin][check]][uni[0]].ravel()
-        t_zeros = np.zeros((uni[0].shape[0], 3), dtype=np.float32)
-
-        f_zeros = np.zeros((uni[0].shape[0], 3), dtype=np.float32)
-        zeros = np.zeros((uni[0].shape[0], 3), dtype=np.float32)
-        
-        np.add.at(f_zeros, uni[1], pl_move/div[:, None])
-        np.add.at(zeros, uni[1], travel/div[:, None])
-
-        move = (zeros * (1 - fr)) + (f_zeros * fr)
-        #move = (travel * (1 - fr)) + (pl_move * fr)
-        
-        cloth.co[uni[0]] += move
-        
-        return
-        
+    # add friction force:
     fr = cloth.ob.MC_props.sc_friction
+    if fr > 0:
+        ve = fr
+        if ve > 1:
+            ve = 1
+            print(ve)
+        cloth.velocity[co_idx] *= (1 - ve)
         
-    if False:    
-        if fr == 0:
-            
-        
-            cloth.co[co_idx] += travel
-            print('zero friction')
-            return
-    
-    # could try managing the velocity instead of all this 
-    # add.at crap for the friction... So like reduce the vel when self collide
-    # happens. 
-    
-        
-    pl_move = loc - cloth.co[co_idx]
-    uni = np.unique(co_idx, return_counts=True, return_inverse=True)
-    div = uni[2][uni[1]]
-    
-    if True:
-        
-        travel# *= 0.5
-        pl_move# *= 0.25
-        move = (travel * (1 - fr)) + (pl_move * fr)
-        move /= div[:, None]
+        if False: # causes instabilities when multiple layers compete.
+            pl_move = (loc - cloth.co[co_idx]) * fr * .2
 
-        #move *= .9
-        
-        np.add.at(cloth.co, co_idx, move)
-        
-        #move *= .1
-        
-        back_tris = True
-        back_tris = False
-        if back_tris:
-            tridex = cloth.tridex[tidx[in_margin][check]]
-            np.subtract.at(cloth.co, tridex.ravel(), np.repeat(move, 3, axis=0))
-        
-        
-        return
+            lens = np.sqrt(np.einsum('ij,ij->i', pl_move, pl_move))
+            #uni, inv, counts = np.unique(co_idx, return_inverse=True, return_counts=True)
+            stretch_array[:] = 0.0# np.zeros(uni.shape[0], dtype = np.float32)
+            np.add.at(stretch_array, inv, lens)
+            weights = lens / stretch_array[inv]
+            pl_move *= (weights[:, None] * .777)    
+
+            np.add.at(cloth.co, co_idx, np.nan_to_num(pl_move))
+
+    np.add.at(cloth.co, co_idx, np.nan_to_num(travel))
+
 
 
 class SelfCollide():
@@ -652,8 +635,11 @@ class SelfCollide():
         cloth.sc_co[cloth.v_count:] = cloth.co
         self.fco = cloth.co
         
-        tris_six[:, :3] = cloth.select_start[cloth.tridex]
-        tris_six[:, 3:] = cloth.co[cloth.tridex]
+        M = cloth.ob.MC_props.self_collide_margin * .5
+        shift = cloth.v_norms * M
+        self.shift = shift
+        tris_six[:, :3] = (cloth.select_start - shift)[cloth.tridex]
+        tris_six[:, 3:] = (cloth.co + shift)[cloth.tridex]
         
         if False:
             M = cloth.ob.MC_props.self_collide_margin
@@ -706,6 +692,7 @@ def detect_collisions(cloth):
 
     self_collisions_7(sc, sc.M, cloth)
 
+    #for i in range(2):    
     ray_check_oc(sc, sc.ees, sc.trs, cloth)
         
     if sc.report:

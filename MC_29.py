@@ -86,9 +86,9 @@ if True:
         from . import MC_object_collision
     except:
         MC_object_collision = bpy.data.texts['MC_object_collision.py'].as_module()
+        #MC_object_collision = bpy.data.texts['MC_merged.py'].as_module()
         MC_self_collision = bpy.data.texts['MC_self_collision.py'].as_module()
-        #MC_self_collision = bpy.data.texts['MC_merged.py'].as_module()
-        MC_new_self = bpy.data.texts['MC_new_self.py'].as_module()
+        #MC_new_self = bpy.data.texts['MC_new_self.py'].as_module()
         print("Tried to import internal texts.")
 
 
@@ -180,7 +180,8 @@ def np_co_to_text(ob, co, rw='w', cloth=None):
 def get_proxy_co(ob, co=None, proxy=None, return_proxy=False):
     """Gets co with modifiers like cloth"""
     if proxy is None:
-        dg = bpy.context.evaluated_depsgraph_get()
+        #dg = bpy.context.evaluated_depsgraph_get()
+        dg = glob_dg
         prox = ob.evaluated_get(dg)
         proxy = prox.to_mesh()
 
@@ -190,9 +191,8 @@ def get_proxy_co(ob, co=None, proxy=None, return_proxy=False):
 
     proxy.vertices.foreach_get('co', co.ravel())
     if return_proxy:
-        return co, proxy
+        return co, proxy, prox
     
-    ob.to_mesh_clear()
     return co
 
 
@@ -200,7 +200,8 @@ def get_sc_normals(co, ob):
     """Updates the proxy with current cloth.co
     before getting vertex normals"""
     
-    dg = bpy.context.evaluated_depsgraph_get()
+    #dg = bpy.context.evaluated_depsgraph_get()
+    dg = glob_dg
     prox = ob.evaluated_get(dg)
     proxy = prox.to_mesh()
     proxy.vertices.foreach_set('co', co.ravel())
@@ -209,38 +210,40 @@ def get_sc_normals(co, ob):
     normals = np.zeros((len(proxy.vertices), 3), dtype=np.float32)
     proxy.vertices.foreach_get('normal', normals.ravel())
 
-    ob.to_mesh_clear()
+    #ob.to_mesh_clear()
     return normals
 
 
 
 def get_proxy_normals(ob=None, proxy=None):
     if proxy is None:
-        dg = bpy.context.evaluated_depsgraph_get()
+        #dg = bpy.context.evaluated_depsgraph_get()
+        dg = glob_dg
         prox = ob.evaluated_get(dg)
         proxy = prox.to_mesh()
         
     normals = np.zeros((len(proxy.vertices), 3), dtype=np.float32)
     proxy.vertices.foreach_get('normal', normals.ravel())
 
-    ob.to_mesh_clear()
+    #ob.to_mesh_clear()
     return normals
     
 
 # universal ---------------------
 def absolute_co(ob, co=None):
     """Get vert coords in world space"""
-    co, proxy = get_proxy_co(ob, co, return_proxy=True)
+    co, proxy, prox = get_proxy_co(ob, co, return_proxy=True)
     m = np.array(ob.matrix_world, dtype=np.float32)
     mat = m[:3, :3].T # rotates backwards without T
     loc = m[:3, 3]
-    return co @ mat + loc, proxy
+    return co @ mat + loc, proxy, prox
 
 
 def get_proxy(ob):
     """Gets proxy mesh with mods"""
     # use: ob.to_mesh_clear() to remove
-    dg = bpy.context.evaluated_depsgraph_get()
+    #dg = bpy.context.evaluated_depsgraph_get()
+    dg = glob_dg
     prox = ob.evaluated_get(dg)
     proxy = prox.to_mesh()
     return proxy
@@ -1303,6 +1306,21 @@ def abstract_bend(cloth):
     np.add.at(cloth.co, cloth.sp_ls, np.nan_to_num(cv))
 
 
+def abstract_bend_(cloth):
+    # weighted average method
+    # !!! this might be better. Need to test
+    dynamic(cloth)
+    stretch = cloth.ob.MC_props.bend
+    cv = (cloth.full_moved - cloth.co[cloth.sp_ls])
+    lens = np.sqrt(np.einsum('ij,ij->i', cv, cv))
+    stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
+    np.add.at(stretch_array, cloth.sp_ls, lens)
+    w = (lens / stretch_array[cloth.sp_ls]) * stretch
+    cv *= w[:, None]
+    
+    np.add.at(cloth.co, cloth.sp_ls, np.nan_to_num(cv))
+
+
 #                                                                #
 #                                                                #
 # ------------------- end abstract bend data ------------------- #
@@ -1831,34 +1849,50 @@ class Collider():
 
         #vcs = [len(c.data.vertices) for c in colliders]
         
-        abc_prox = [absolute_co(c) for c in colliders]
-        vcs = [len(p[1].vertices) for p in abc_prox]
+        #abc_prox = [absolute_co(c) for c in colliders]
+        #vcs = [len(p[1].vertices) for p in abc_prox]
         
         
-        total_v_count = np.sum(vcs)
-        cloth.total_co = np.empty((total_v_count, 3), dtype=np.float32)
+        #total_v_count = np.sum(vcs)
+        cloth.total_co = np.empty((0, 3), dtype=np.float32)
+        cloth.inner_norms = np.empty((0, 3), dtype=np.float32)
 
         # have to initalize total_co and last_co for objects
         #colliders = [o for o in bpy.data.objects if (o.MC_props.collider) & (cloth.ob != o)]
         #oms = [c.MC_props.outer_margin for c in colliders]
-        
         #vcs = [len(c.data.vertices) for c in colliders]
+        oc_total_tridex = np.empty((0,3), dtype=np.int32)
+        cloth.oc_tri_counts = []        
         shift = 0
         for i, c in enumerate(colliders):
-            abco, proxy = absolute_co(c)        
+            if c.data.is_editmode:
+                #c.update_from_editmode()
+                pass
+                
+            abco, proxy, prox = absolute_co(c)        
             normals = get_proxy_normals(ob=c, proxy=proxy)
             normals = apply_rotation(c, normals) # could put the collider proxy on an object and copy the world matrix over maybe? Not sure...
+            sh = abco.shape[0]
+            gt2 = get_tridex_2(ob=None, mesh=proxy)
+            cloth.oc_tri_counts.append(gt2.shape[0])
+            oc_total_tridex = np.append(oc_total_tridex, gt2 + shift, axis=0)
+            #prox.to_mesh_clear()
+
             ob_settings = not cloth.ob.MC_props.override_settings
             if ob_settings:
                 surface_offset = normals * c.MC_props.outer_margin
+                im = -c.MC_props.inner_margin
             else:    
                 surface_offset = normals * cloth.ob.MC_props.outer_margin
-            cloth.total_co[shift: shift+vcs[i]] = abco + surface_offset
-            shift = vcs[i]
-
-        cloth.last_co = np.copy(cloth.total_co) # for checing if the collider moved
+                im = -cloth.ob.MC_props.inner_margin
+                
+            cloth.total_co = np.append(cloth.total_co, abco + surface_offset, axis=0)
+            cloth.inner_norms = np.append(cloth.inner_norms, normals * im, axis=0)
             
-        oc_total_tridex = np.empty((0,3), dtype=np.int32)
+            shift += sh
+        
+        cloth.last_co = np.copy(cloth.total_co) # for checing if the collider moved
+        cloth.collider_sh = cloth.total_co.shape[0]
 
         # if I put these on vertex groups I can just multiply the
         # values by the groups. Will have to create groups
@@ -1867,22 +1901,7 @@ class Collider():
         frs = [c.MC_props.outer_margin for c in colliders]
         sfrs = [c.MC_props.static_friction  * .0001 for c in colliders]
         
-        shift = 0
-        cloth.oc_tri_counts = []
-        for i, c in enumerate(colliders):
-            if c.data.is_editmode:
-                c.update_from_editmode()
-
-            abco, proxy = absolute_co(c)
-            gt2 = get_tridex_2(ob=None, mesh=proxy)
-            cloth.oc_tri_counts.append(gt2.shape[0])
-            oc_total_tridex = np.append(oc_total_tridex, gt2 + shift, axis=0)
-            shift = vcs[i]
-                
-        #fcs = [len(c.data.polygons) for c in colliders]
         fcs = oc_total_tridex.shape[0]
-        #total_f_count = np.sum(fcs)
-        print(fcs, "this is total fcs")
         cloth.total_margins = np.zeros(fcs, dtype=np.float32)[:, None]
         cloth.total_friction = np.ones(fcs, dtype=np.float32)[:, None]
         cloth.total_static = np.zeros(fcs, dtype=np.float32)
@@ -1890,16 +1909,12 @@ class Collider():
         cloth.oc_total_tridex = oc_total_tridex
         cloth.oc_indexer = np.arange(oc_total_tridex.shape[0], dtype=np.int32)
         cloth.static = False
-        cloth.vcs = vcs
         cloth.fcs = fcs
         cloth.oc_tris_six = np.empty((oc_total_tridex.shape[0], 6, 3), dtype=np.float32)
         cloth.oc_eidx = np.arange(len(cloth.ob.data.vertices), dtype=np.int32)
-        cloth.oc_co = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
         cloth.traveling_edge_co = np.empty((cloth.co.shape[0], 2, 3), dtype=np.float32)
         
         # fed in before vel is added to cloth.co
-        cloth.oc_move = np.zeros((0, 3), dtype=np.float32)
-        cloth.oc_move_idx = np.empty(0, dtype=np.int32)
         
         cloth.tris6_bool = np.ones(cloth.oc_total_tridex.shape[0], dtype=np.bool)
         
@@ -1923,8 +1938,10 @@ class Cloth(object):
 # cloth instance ---------------
 def create_instance(ob=None):
     """Run this when turning on modeling cloth."""
+    global glob_dg
     cloth = Cloth()
     cloth.dg = bpy.context.evaluated_depsgraph_get()
+    glob_dg = cloth.dg
     if ob is None:
         ob = bpy.context.object
     cloth.ob = ob
@@ -2048,7 +2065,6 @@ def create_instance(ob=None):
 
 
     Collider(cloth)
-    cloth.oc_co = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
     
     return cloth
 
@@ -2660,10 +2676,12 @@ def spring_basic_no_sw(cloth):
     if cloth.ob.MC_props.self_collide:
         if cloth.ob.data.is_editmode:
             cloth.ob.update_from_editmode()
-        
         #cloth.sc_normals = get_proxy_normals(ob=cloth.ob) # can optimize with pre-allocating
         #cloth.sc_normals = get_sc_normals(cloth.co, ob=cloth.ob) # can optimize with pre-allocating
         cloth.OM = cloth.ob.MC_props.outer_margin
+        #sc = MC_self_collision.detect_collisions(cloth)
+        #for i in range(2):    
+        update_v_norms(cloth)
         sc = MC_self_collision.detect_collisions(cloth)
 
         #if hasattr(cloth, 'cv_dif'):
@@ -2672,85 +2690,87 @@ def spring_basic_no_sw(cloth):
     
 
     # object collistion ---------------------------
+    if cloth.ob.MC_props.new_sc:
+        MC_object_collision.detect_collisions(cloth)    
+        sc_mesh(cloth)
+        #cloth.last_co[:] = cloth.total_co
     
     if cloth.ob.MC_props.detect_collisions:
 
         colliders = [o for o in bpy.data.objects if (o.MC_props.collider) & (cloth.ob != o)]
         if len(colliders) > 0:
             
-
-            # make a prop for this in settings    
             ob_settings = not cloth.ob.MC_props.override_settings
-            #if ob_settings:
-                #cloth.OM = max([o.MC_props.outer_margin for o in colliders])
-                #cloth.static_threshold = max([o.MC_props.static_friction for o in colliders]) * .0001
-                #cloth.object_friction = max([o.MC_props.oc_friction for o in colliders])
-                # prolly should create a function here that
-                #   sets these per object. Will have to use
-                #   collision index to get the values.
-                #   could even use vertex groups both on the cloth
-                #   and on the colliders...
-            #else:    
             cloth.OM = cloth.ob.MC_props.outer_margin
             cloth.static_threshold = cloth.ob.MC_props.static_friction * .0001            
             cloth.object_friction = cloth.ob.MC_props.oc_friction
             
-            for o in colliders:
-                if o.data.is_editmode:
-                    o.update_from_editmode()
+            #abc_prox = [absolute_co(c) for c in colliders]
+            #vcs = [len(p[1].vertices) for p in abc_prox]
+
+            oms = [c.MC_props.outer_margin for c in colliders]
+            ims = [c.MC_props.inner_margin for c in colliders]
+            frs = [c.MC_props.oc_friction for c in colliders]
+            sfrs = [c.MC_props.static_friction  * .0001 for c in colliders]
+            cloth.OM = max(oms)
+
+            shift = 0
+            f_shift = 0
+            #cloth.total_co = np.empty((0, 3), dtype=np.float32)
+            recalc = False
+            inner_m = False
+            for i, c in enumerate(colliders):
+                abco, proxy, prox = absolute_co(c)
+                normals = get_proxy_normals(ob=c, proxy=proxy)
+                normals = apply_rotation(c, normals) # could put the collider proxy on an object and copy the world matrix over maybe? Not sure...
+                #prox.to_mesh_clear()
+                
+                sh = abco.shape[0]
+                
+                if ob_settings:
+                    surface_offset = normals * oms[i]
+                    im = c.MC_props.inner_margin
+                else:    
+                    surface_offset = normals * cloth.ob.MC_props.outer_margin
+                    im = cloth.ob.MC_props.inner_margin
+                    
+                if (shift + sh) > cloth.total_co.shape[0]:
+                    recalc = True
+                    continue
+                
+                if ims[i] > 0:
+                    cloth.inner_norms[shift: shift + sh] = normals * -im
+                    inner_m = True
+                    
+                cloth.total_co[shift: shift + sh] = abco + surface_offset
+                #cloth.total_co = np.append(cloth.total_co, abco + surface_offset, axis=0)
+                shift += sh
             
-            abc_prox = [absolute_co(c) for c in colliders]
-            vcs = [len(p[1].vertices) for p in abc_prox]
+            #if cloth.collider_sh != cloth.total_co.shape[0]:
+            if recalc:
+                Collider(cloth)
 
             if ob_settings:    
                 #fcs = [len(p[1].polygons) for p in abc_prox]
                 fcs = cloth.oc_tri_counts  #[len(p[1].polygons) for p in abc_prox]
-                oms = [c.MC_props.outer_margin for c in colliders]
-                frs = [c.MC_props.oc_friction for c in colliders]
-                sfrs = [c.MC_props.static_friction  * .0001 for c in colliders]
-                cloth.OM = max(oms)
                 
-            skip = False    
-            if vcs != cloth.vcs:
-                Collider(cloth=cloth)
-                skip = True
-            
-            if not skip:
-                print("is this running still?")
-                shift = 0
                 f_shift = 0
-                for i, c in enumerate(colliders):
-                    
-                    # could optimize by storing proxy and co...
-                    #abco, proxy = absolute_co(c)
-                    abco, proxy = abc_prox[i]
+                for i in range(len(colliders)):
+                    cloth.total_margins[f_shift: f_shift+fcs[i]] = oms[i]
+                    cloth.total_friction[f_shift: f_shift+fcs[i]] = frs[i]
+                    cloth.total_static[f_shift: f_shift+fcs[i]] = sfrs[i]
+                    f_shift = fcs[i]
 
-                    normals = get_proxy_normals(ob=c, proxy=proxy)
-                    normals = apply_rotation(c, normals) # could put the collider proxy on an object and copy the world matrix over maybe? Not sure...
-                    
-                    if ob_settings:
-                        surface_offset = normals * oms[i]
-                    else:    
-                        surface_offset = normals * cloth.ob.MC_props.outer_margin
-                    
-                    cloth.total_co[shift: shift+vcs[i]] = abco + surface_offset
-                    
-                    shift = vcs[i]
-
-                    if ob_settings:                        
-                        cloth.total_margins[f_shift: f_shift+fcs[i]] = oms[i]
-                        cloth.total_friction[f_shift: f_shift+fcs[i]] = frs[i]
-                        cloth.total_static[f_shift: f_shift+fcs[i]] = sfrs[i]
-                        f_shift = fcs[i]
-            
-            # checing if the colliders move...
+        # checing if the colliders move...
             static_check = True
             #static_check = False
             if static_check:
+                #ccdif = np.abs(cloth.last_co - cloth.total_co)
                 ccdif = cloth.last_co - cloth.total_co
                 cloth.static = False
                 if np.all(ccdif == 0):
                     cloth.static = True
+                
             # --------------------------------
             #if new_sc:
                 #MC_new_self.detect_collisions(cloth)
@@ -2764,9 +2784,11 @@ def spring_basic_no_sw(cloth):
             # update collision objects coords:
             
             MC_object_collision.detect_collisions(cloth)
-            
+            #print(cloth.last_co.shape)
             cloth.last_co[:] = cloth.total_co
-
+            if inner_m:
+                cloth.last_co += cloth.inner_norms
+            
     # object collistion ---------------------------
     
     update_pins_select_sew_surface(cloth) # also hooks
@@ -3616,14 +3638,14 @@ def cb_self_collision(self, context):
     for v in cloth.triobm.verts:
         for lf in v.link_faces:
             cloth.v_tri_pairs += [[v.index, lf.index]]
-            #cloth.v_tri_pairs += [[v.index, lf.index + c]]
+            cloth.v_tri_pairs += [[v.index, lf.index + c]]
             #if v.index == 72:
             for vv in lf.verts:
                 #print(vv.index)
                 for vlf in vv.link_faces:
                     #test.append(vlf.index)
                     cloth.v_tri_pairs += [[v.index, vlf.index]]
-                    #cloth.v_tri_pairs += [[v.index, vlf.index + c]]
+                    cloth.v_tri_pairs += [[v.index, vlf.index + c]]
 
                         #print(vlf.index)
                         
@@ -3647,7 +3669,25 @@ def cb_self_collision(self, context):
     
     #print(np.array(cloth.v_tri_pairs))
     #print(np.array(cloth.string_pairs))
+    cloth.traveling_edge_co = np.empty((cloth.co.shape[0], 2, 3), dtype=np.float32)
+    #cloth.sc_tris_six = np.append(cloth.tridex, cloth.tridex + np.max(cloth.tridex), axis=0)
+    cloth.sc_tris_six = np.empty((cloth.tridex.shape[0] * 2, 6, 3), dtype=np.float32)
+    cloth.oc_eidx = np.arange(len(cloth.ob.data.vertices), dtype=np.int32)
     
+    if cloth.ob.MC_props.new_sc:
+        triobm = cloth.triobm
+        cloth.v_norms = np.empty((cloth.co.shape[0], 3), dtype=np.float32)
+        cloth.v_norms_start = np.empty((cloth.co.shape[0], 3), dtype=np.float32)
+        cloth.v_norm_indexer1 = np.hstack([[f.index for f in v.link_faces] for v in triobm.verts])
+        cloth.v_norm_indexer = np.hstack([[v.index] * len(v.link_faces) for v in triobm.verts])
+        cloth.sc_mesh_co = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
+        cloth.sc_mesh_co_start = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
+        #print(cloth.v_norm_indexer2)
+        
+        cloth.tridex_flip = np.copy(cloth.tridex)
+        cloth.tridex_flip[:, 1:] = cloth.tridex[:, 1:][::-1]
+        sc_mesh(cloth)
+
 
 def cb_collider(self, context):
     """Set up object as collider"""
@@ -4106,8 +4146,8 @@ class McPropsObject(bpy.types.PropertyGroup):
     outer_margin:\
     bpy.props.FloatProperty(name="Outer Margin", description="Distance from surface of collisions on positive normal side", default=0.1, precision=3)
 
-    #inner_margin:\
-    #bpy.props.FloatProperty(name="Inner Margin", description="Points within this distance on the negative side of the normal will be pushed out", default=0.2, precision=3)
+    inner_margin:\
+    bpy.props.FloatProperty(name="Inner Margin", description="Points within this distance on the negative side of the normal will be pushed out", default=0.0, precision=3)
 
     detect_collisions:\
     bpy.props.BoolProperty(name="Detect Collisions", description="This cloth object checks for collisions", default=True, update=cb_detect_collisions)
@@ -4397,103 +4437,14 @@ class MCResetSelectedToBasisShape(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class ScCloth:
-    pass
-
-
-class SelfCollider():
-    # The collider object
-    name = 'inital name'
-
-    def __init__(self, sc_cloth=None):
-        
-        #print('----------__init__-----------')
-        
-        colliders = [sc_cloth.ob]
-        
-        
-        abc_prox = [absolute_co(c) for c in colliders]
-        vcs = [len(p[1].vertices) for p in abc_prox]
-        
-        
-        total_v_count = np.sum(vcs)
-        cloth.total_co = np.empty((total_v_count, 3), dtype=np.float32)
-
-        # have to initalize total_co and last_co for objects
-        #colliders = [o for o in bpy.data.objects if (o.MC_props.collider) & (cloth.ob != o)]
-        #oms = [c.MC_props.outer_margin for c in colliders]
-        
-        #vcs = [len(c.data.vertices) for c in colliders]
-        shift = 0
-        for i, c in enumerate(colliders):
-            abco, proxy = absolute_co(c)        
-            normals = get_proxy_normals(ob=c, proxy=proxy)
-            normals = apply_rotation(c, normals) # could put the collider proxy on an object and copy the world matrix over maybe? Not sure...
-            ob_settings = not cloth.ob.MC_props.override_settings
-            if ob_settings:
-                surface_offset = normals * c.MC_props.outer_margin
-            else:    
-                surface_offset = normals * cloth.ob.MC_props.outer_margin
-            cloth.total_co[shift: shift+vcs[i]] = abco + surface_offset
-            shift = vcs[i]
-
-        cloth.last_co = np.copy(cloth.total_co)
-            
-        oc_total_tridex = np.empty((0,3), dtype=np.int32)
-
-        # if I put these on vertex groups I can just multiply the
-        # values by the groups. Will have to create groups
-        # for the collide objects and set them to one by default.
-        
-        frs = [c.MC_props.outer_margin for c in colliders]
-        sfrs = [c.MC_props.static_friction  * .0001 for c in colliders]
-        
-        shift = 0
-        cloth.oc_tri_counts = []
-        for i, c in enumerate(colliders):
-            if c.data.is_editmode:
-                c.update_from_editmode()
-
-            abco, proxy = absolute_co(c)
-            gt2 = get_tridex_2(ob=None, mesh=proxy)
-            cloth.oc_tri_counts.append(gt2.shape[0])
-            oc_total_tridex = np.append(oc_total_tridex, gt2 + shift, axis=0)
-            shift = vcs[i]
-                
-        #fcs = [len(c.data.polygons) for c in colliders]
-        fcs = oc_total_tridex.shape[0]
-        #total_f_count = np.sum(fcs)
-        
-        cloth.total_margins = np.zeros(fcs, dtype=np.float32)[:, None]
-        cloth.total_friction = np.ones(fcs, dtype=np.float32)[:, None]
-        cloth.total_static = np.zeros(fcs, dtype=np.float32)
-        
-        cloth.oc_total_tridex = oc_total_tridex
-        cloth.oc_indexer = np.arange(oc_total_tridex.shape[0], dtype=np.int32)
-        cloth.static = False
-        cloth.vcs = vcs
-        cloth.fcs = fcs
-        cloth.oc_tris_six = np.empty((oc_total_tridex.shape[0], 6, 3), dtype=np.float32)
-        cloth.oc_eidx = np.arange(len(cloth.ob.data.vertices), dtype=np.int32)
-        cloth.oc_co = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
-        
-        # fed in before vel is added to cloth.co
-        cloth.oc_move = np.zeros((0, 3), dtype=np.float32)
-        cloth.oc_move_idx = np.empty(0, dtype=np.int32)
-        
-        cloth.tris6_bool = np.ones(cloth.oc_total_tridex.shape[0], dtype=np.bool)
-        
-        """ !!!!! There is a bug where any empty causes it to break !!!!!"""
-
-
 def sc_mesh(cloth):
     #return
     """Could I merge the self collide mesh with collide objects????"""
     # get the vert normals
     # means getting the tri normals
     #   for the start co and the current co
-
-    if 1:  
+    print("running?")
+    if 0:  
         bpy.data.objects['tp'].data.vertices.foreach_set('co', cloth.co.ravel())
         bpy.data.objects['tp'].data.update()
         return
@@ -4503,6 +4454,8 @@ def sc_mesh(cloth):
     
     normals = get_normals_from_tris(tri_co)
     start_normals = get_normals_from_tris(start_tri_co)
+    
+    
     
     # now get vertex normals with add.at
 
@@ -4526,15 +4479,43 @@ def sc_mesh(cloth):
     
     vc = cloth.co.shape[0]
 
-    cloth.sc_mesh_co[:vc] = cloth.co - (cloth.v_norms) # np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
-    cloth.sc_mesh_co[vc:] = cloth.co + (cloth.v_norms)# np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
-    
-    cloth.sc_mesh_co_start[:vc] = cloth.select_start - (cloth.v_norms_start) # np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
-    cloth.sc_mesh_co_start[vc:] = cloth.select_start + (cloth.v_norms_start)# np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
+    if False:
+        cloth.sc_mesh_co[:vc] = cloth.co - (cloth.v_norms) # np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
+        cloth.sc_mesh_co[vc:] = cloth.co + (cloth.v_norms)# np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
+        
+        cloth.sc_mesh_co_start[:vc] = cloth.select_start - (cloth.v_norms_start) # np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
+        cloth.sc_mesh_co_start[vc:] = cloth.select_start + (cloth.v_norms_start)# np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
 
-    if 1:  
+    neg = cloth.co + (cloth.v_norms) # np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
+    pos = cloth.co - (cloth.v_norms)# np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
+    
+    spos = cloth.select_start - (cloth.v_norms_start) # np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
+    sneg = cloth.select_start + (cloth.v_norms_start)# np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
+
+
+    ts = cloth.tridex.shape[0]
+    cloth.sc_tris_six[:ts][:, :3] = sneg[cloth.tridex]
+    cloth.sc_tris_six[ts:][:, :3] = spos[cloth.tridex]
+    cloth.sc_tris_six[:ts][:, 3:] = neg[cloth.tridex]
+    cloth.sc_tris_six[ts:][:, 3:] = pos[cloth.tridex]
+
+
+
+
+    if 0:  
         bpy.data.objects['tp'].data.vertices.foreach_set('co', cloth.sc_mesh_co.ravel())
         bpy.data.objects['tp'].data.update()
+
+
+def update_v_norms(cloth):
+    """updates cloth.v_norms"""
+        
+    tri_co = cloth.co[cloth.tridex]
+    normals = get_normals_from_tris(tri_co)
+
+    # now get vertex normals with add.at
+    cloth.v_norms[:] = 0.0
+    np.add.at(cloth.v_norms, cloth.v_norm_indexer, normals[cloth.v_norm_indexer1])
 
 
 def refresh(cloth):
@@ -4600,28 +4581,22 @@ def refresh(cloth):
     cloth.tridex, triobm = get_tridex_2(ob)
     cloth.triobm = triobm
 
+    # for offset_cloth_tris:
+    cloth.v_norms = np.empty((cloth.co.shape[0], 3), dtype=np.float32)
+    cloth.v_norm_indexer1 = np.hstack([[f.index for f in v.link_faces] for v in triobm.verts])
+    cloth.v_norm_indexer = np.hstack([[v.index] * len(v.link_faces) for v in triobm.verts])
+    # ----------------------
+
     if cloth.ob.MC_props.new_sc:
 
-        cloth.v_norms = np.empty((cloth.co.shape[0], 3), dtype=np.float32)
+        #cloth.v_norms = np.empty((cloth.co.shape[0], 3), dtype=np.float32)
         cloth.v_norms_start = np.empty((cloth.co.shape[0], 3), dtype=np.float32)
-        cloth.v_norm_indexer1 = np.hstack([[f.index for f in v.link_faces] for v in triobm.verts])
-        cloth.v_norm_indexer = np.hstack([[v.index] * len(v.link_faces) for v in triobm.verts])
+        #cloth.v_norm_indexer1 = np.hstack([[f.index for f in v.link_faces] for v in triobm.verts])
+        #cloth.v_norm_indexer = np.hstack([[v.index] * len(v.link_faces) for v in triobm.verts])
         cloth.sc_mesh_co = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
         cloth.sc_mesh_co_start = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
         #print(cloth.v_norm_indexer2)
         sc_mesh(cloth)
-    
-        #print(v_norm_div)
-
-        sc_cloth = ScCloth()
-
-        #sc_cloth.ob = cloth.ob
-        #sc_cloth.co = sc_mesh_co
-        #sc_cloth.co_start = sc_mesh_co_start
-
-
-        #SelfCollider(sc_cloth)
-
     
     cloth.turbulence = np.random.rand(cloth.tridex.shape[0])
     cloth.turbulence_2 = np.random.rand(cloth.tridex.shape[0])
@@ -4987,60 +4962,64 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
         if True:    
             if ob.MC_props.collider:
                 row = col.row()
-                #col = layout.column(align=True)
-                row.scale_y = 0.75
-                #row.label(icon='PROP_CON')
-                row.prop(ob.MC_props, "static_friction", text="Static Friction")#, icon='PROP_CON')
-                row = col.row()
                 row.scale_y = 0.75
                 #row.label(icon='PROP_OFF')
                 row.prop(ob.MC_props, "outer_margin", text="Outer Margin")#, icon='PROP_OFF')
                 row = col.row()
                 row.scale_y = 0.75
+                row.prop(ob.MC_props, "inner_margin", text="Inner Margin")#, icon='PROP_OFF')
+                row = col.row()
+                row.scale_y = 0.75
                 #row.label(icon='PROP_OFF')
                 row.prop(ob.MC_props, "oc_friction", text="Friction")#, icon='PROP_OFF')
-        col.prop(ob.MC_props, "self_collide", text="Self Collision", icon='FULLSCREEN_EXIT')
-        if ob.MC_props.self_collide:
-            row = col.row()
-            #col = layout.column(align=True)
-            row.scale_y = 0.75
-            row.label(icon='PROP_CON')
-            row.prop(ob.MC_props, "self_collide_margin", text="SC Margin", icon='PROP_CON')
-            row = col.row()
-            row.label(icon='CON_PIVOT')
-            row.scale_y = 0.75            
-            row.prop(ob.MC_props, "sc_friction", text="Friction", icon='CON_PIVOT')            
-            #row = col.row()
-            #row.label(icon='CON_PIVOT')            
-            #row.scale_y = 0.75            
-            #row.prop(ob.MC_props, "sc_vel_damping", text="Damping", icon='CON_PIVOT')
-            #row = col.row()
-            #row.label(icon='CON_PIVOT')
-            #row.scale_y = 0.75            
-            #row.prop(ob.MC_props, "self_collide_force", text="SC Force", icon='CON_PIVOT')
-            row = col.row()            
-            row = col.row()
-        col.prop(ob.MC_props, "new_sc", text="New Self Collision", icon='FULLSCREEN_EXIT')
-        if ob.MC_props.new_sc:
-            row = col.row()
-            #col = layout.column(align=True)
-            row.scale_y = 0.75
-            row.label(icon='PROP_CON')
-            row.prop(ob.MC_props, "new_self_margin", text="SC Margin", icon='PROP_CON')
-            row = col.row()
-            #row.label(icon='CON_PIVOT')
-            #row.scale_y = 0.75            
-            #row.prop(ob.MC_props, "sc_friction", text="Friction", icon='CON_PIVOT')            
-            #row = col.row()            
-            # show the box max for collision stuff
-            #row.label(icon='CON_PIVOT')
-            #row.scale_y = 0.75            
-            #row.prop(ob.MC_props, "sc_box_max", text="Box Size", icon='CON_PIVOT')
+                row = col.row()
+                #col = layout.column(align=True)
+                row.scale_y = 0.75
+                #row.label(icon='PROP_CON')
+                row.prop(ob.MC_props, "static_friction", text="Static Friction")#, icon='PROP_CON')
+        if ob.MC_props.cloth:
+            col.prop(ob.MC_props, "self_collide", text="Self Collision", icon='FULLSCREEN_EXIT')
+            if ob.MC_props.self_collide:
+                row = col.row()
+                #col = layout.column(align=True)
+                row.scale_y = 0.75
+                row.label(icon='PROP_CON')
+                row.prop(ob.MC_props, "self_collide_margin", text="SC Margin", icon='PROP_CON')
+                row = col.row()
+                row.label(icon='CON_PIVOT')
+                row.scale_y = 0.75            
+                row.prop(ob.MC_props, "sc_friction", text="Friction", icon='CON_PIVOT')            
+                #row = col.row()
+                #row.label(icon='CON_PIVOT')            
+                #row.scale_y = 0.75            
+                #row.prop(ob.MC_props, "sc_vel_damping", text="Damping", icon='CON_PIVOT')
+                #row = col.row()
+                #row.label(icon='CON_PIVOT')
+                #row.scale_y = 0.75            
+                #row.prop(ob.MC_props, "self_collide_force", text="SC Force", icon='CON_PIVOT')
+                row = col.row()            
+                row = col.row()
+            col.prop(ob.MC_props, "new_sc", text="New Self Collision", icon='FULLSCREEN_EXIT')
+            if ob.MC_props.new_sc:
+                row = col.row()
+                #col = layout.column(align=True)
+                row.scale_y = 0.75
+                row.label(icon='PROP_CON')
+                row.prop(ob.MC_props, "new_self_margin", text="SC Margin", icon='PROP_CON')
+                row = col.row()
+                #row.label(icon='CON_PIVOT')
+                #row.scale_y = 0.75            
+                #row.prop(ob.MC_props, "sc_friction", text="Friction", icon='CON_PIVOT')            
+                #row = col.row()            
+                # show the box max for collision stuff
+                #row.label(icon='CON_PIVOT')
+                #row.scale_y = 0.75            
+                #row.prop(ob.MC_props, "sc_box_max", text="Box Size", icon='CON_PIVOT')
 
 
-        # use current mesh or most recent cloth object if current ob isn't mesh
+            # use current mesh or most recent cloth object if current ob isn't mesh
 
-        # if we select a new mesh object we want it to display
+            # if we select a new mesh object we want it to display
 
         col = layout.column(align=True)
         col.scale_y = 1.5
@@ -5062,15 +5041,18 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
                 #col = layout.column(align=True)
                 row.scale_y = 0.75
                 #row.label(icon='PROP_CON')
-                row.prop(ob.MC_props, "static_friction", text="Static Friction", icon='PROP_CON')
+                row.prop(ob.MC_props, "outer_margin", text="Outer Margin", icon='PROP_OFF')
                 row = col.row()
                 row.scale_y = 0.75
-                #row.label(icon='PROP_OFF')
-                row.prop(ob.MC_props, "outer_margin", text="Outer Margin", icon='PROP_OFF')
+                row.prop(ob.MC_props, "inner_margin", text="Inner Margin", icon='PROP_OFF')
                 row = col.row()
                 row.scale_y = 0.75
                 #row.label(icon='PROP_OFF')
                 row.prop(ob.MC_props, "oc_friction", text="Friction", icon='PROP_OFF')
+                row = col.row()
+                row.scale_y = 0.75
+                #row.label(icon='PROP_OFF')
+                row.prop(ob.MC_props, "static_friction", text="Static Friction", icon='PROP_CON')
 
 
             col.label(text='Update Mode')

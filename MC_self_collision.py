@@ -4,6 +4,15 @@ import bmesh
 import time
 
 
+big_t = 0.0
+def rt_(num=None):
+    global big_t
+    t = time.time()
+    if num is not None:    
+        print(t - big_t, "timer", num)
+    big_t = t
+
+
 def timer(t, name='name'):
     ti = bpy.context.scene.timers
     if name not in ti:
@@ -127,7 +136,7 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs):
 
     w = 1 - (u+v)
     # !!!! needs some thought
-    margin = -0.0
+    margin = -0.05
     # !!!! ==================
     weights = np.array([w, u, v]).T
     check = (u >= margin) & (v >= margin) & (w >= margin)
@@ -136,7 +145,7 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs):
 
 
 def b2(sc, cloth, count):
-    print('runing b2 self_collisions', count)
+    #print('running b2 self_collisions', count)
     if len(sc.big_boxes) == 0:
         print("ran out")
         return
@@ -469,15 +478,14 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
     if 0:
         print(len(sc.big_boxes), "how many big boxes")
         print(len(sc.small_boxes), "how many small boxes")
-        
+    
+    rt_()    
     for en, b in enumerate(sc.small_boxes):
         trs = np.array(b[0], dtype=np.int32)
         ed = np.array(b[1], dtype=np.int32) # can't figure out why this becomes an object array sometimes...
 
         if ed.shape[0] == 0:
             continue
-            
-        cloth.ob.data.update()
         
         tris = sc.tris[trs]
         eds = sc.edges[ed]
@@ -520,9 +528,16 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
             
             sc.ees += re.tolist()
             sc.trs += rt.tolist()
-
+    #rt_('sc iterate')
+    
 
 def ray_check_oc(sc, ed, trs, cloth):
+    
+    """Need to fix selected points by removing them
+    from the weights.
+    Need to join ob collide and self collide weights
+    to improve stability."""
+    
     
     eidx = np.array(ed, dtype=np.int32)
     tidx = np.array(trs, dtype=np.int32)
@@ -587,13 +602,73 @@ def ray_check_oc(sc, ed, trs, cloth):
     #move = cloth.co[co_idx] - start_co_loc
     
     #now in theory I can use the weights from start tris
+    combined_weights = True # weights with points and tris
+    if combined_weights:
+        #tri_travel = np.repeat(travel, 3, axis=0)
+        
+#        trying to get the weights with tris combined...
+#        not sure how to do that...
+#        
+#        the tris bounce when overlap makes a point move because
+#        it's a point and it also moves because it's a back tri.
+#        It moves too far. I need to balance the wights for this.
+#        It has to be included in unique if it shows up in back tris.
+#        there are points in back tris that are not in points.
+#        getting the movement of the back tri points and adding
+#        them to the weight div is correct.
+#        there could be two tris that share a point that is not
+#        part of the point move. The point would get double movement
+#        even though its not in the move points so it needs to be
+#        accumulated for the weights.
+#        so we get the unique array and the stretch array that includes
+#        the back tri points.
+#        now... whats the next math?
+        
+        
+        tp = cloth.tridex[tidx[in_margin][check]].ravel()
+        joined = np.append(co_idx, tp)
+        
+        
+        uni, inv, counts = np.unique(joined, return_inverse=True, return_counts=True)
+        
+        lens = np.sqrt(np.einsum('ij,ij->i', travel, travel))
+        tri_lens = np.repeat(lens, 3)
+        joined_lens = np.append(lens, tri_lens)
+        
+        stretch_array = np.zeros(uni.shape[0], dtype = np.float32)
+        np.add.at(stretch_array, inv, joined_lens)
+        weights = joined_lens / stretch_array[inv]
+        tri_travel = np.repeat(-travel, 3, axis=0)
+        joined_travel = np.append(travel, tri_travel, axis=0)
+        
+        scf = cloth.ob.MC_props.self_collide_force
+        
+        joined_travel *= (weights[:, None] * scf)
+
+
+        ntn = np.nan_to_num(joined_travel)
+        np.add.at(cloth.co, joined, ntn)
+        
+        return        
+        back_tris = True
+        #back_tris = False
+        #if cloth.ob.MC_props.p1_cloth:        
+        if back_tris:        
+            tridex = cloth.tridex[tidx[in_margin][check]]
+            np.subtract.at(cloth.co, tridex.ravel(), np.repeat(ntn * .25, 3, axis=0))
+        
+
+        
+        return
         
     lens = np.sqrt(np.einsum('ij,ij->i', travel, travel))
     uni, inv, counts = np.unique(co_idx, return_inverse=True, return_counts=True)
     stretch_array = np.zeros(uni.shape[0], dtype = np.float32)
     np.add.at(stretch_array, inv, lens)
     weights = lens / stretch_array[inv]
-    travel *= (weights[:, None] * .777)            
+    #travel *= (weights[:, None] * .777)            
+    #travel *= (weights[:, None])# * .777)            
+    travel *= (weights[:, None] * .5)#.777)            
 
     # add friction force:
     fr = cloth.ob.MC_props.sc_friction
@@ -604,21 +679,32 @@ def ray_check_oc(sc, ed, trs, cloth):
             print(ve)
         cloth.velocity[co_idx] *= (1 - ve)
         
-        if False: # causes instabilities when multiple layers compete.
-            pl_move = (loc - cloth.co[co_idx]) * fr * .2
+#        if False: # causes instabilities when multiple layers compete.
+#            pl_move = (loc - cloth.co[co_idx]) * fr * .2
 
-            lens = np.sqrt(np.einsum('ij,ij->i', pl_move, pl_move))
-            #uni, inv, counts = np.unique(co_idx, return_inverse=True, return_counts=True)
-            stretch_array[:] = 0.0# np.zeros(uni.shape[0], dtype = np.float32)
-            np.add.at(stretch_array, inv, lens)
-            weights = lens / stretch_array[inv]
-            pl_move *= (weights[:, None] * .777)    
+#            lens = np.sqrt(np.einsum('ij,ij->i', pl_move, pl_move))
+#            #uni, inv, counts = np.unique(co_idx, return_inverse=True, return_counts=True)
+#            stretch_array[:] = 0.0# np.zeros(uni.shape[0], dtype = np.float32)
+#            np.add.at(stretch_array, inv, lens)
+#            weights = lens / stretch_array[inv]
+#            #pl_move *= (weights[:, None] * .777)    
+#            pl_move *= (weights[:, None] * .5)    
 
-            np.add.at(cloth.co, co_idx, np.nan_to_num(pl_move))
+#            np.add.at(cloth.co, co_idx, np.nan_to_num(pl_move))
 
-    np.add.at(cloth.co, co_idx, np.nan_to_num(travel))
-
-
+    ntn = np.nan_to_num(travel)
+    np.add.at(cloth.co, co_idx, ntn)
+            
+    back_tris = True
+    #back_tris = False
+    #if cloth.ob.MC_props.p1_cloth:        
+    if back_tris:        
+        tridex = cloth.tridex[tidx[in_margin][check]]
+        np.subtract.at(cloth.co, tridex.ravel(), np.repeat(ntn * .25, 3, axis=0))
+    
+    #cloth.co[cloth.previous_sc] = prev[cloth.previous_sc]
+    #cloth.previous_sc = uni
+    
 
 class SelfCollide():
     name = "sc"
@@ -651,7 +737,8 @@ class SelfCollide():
 
         #self.indexer = cloth.sc_indexer
 
-        self.box_max = cloth.ob.MC_props.sc_box_max
+        #self.box_max = cloth.ob.MC_props.sc_box_max
+        self.box_max = 150#cloth.ob.MC_props.sc_box_max
 
         self.M = cloth.ob.MC_props.self_collide_margin
         #self.force = cloth.ob.MC_props.self_collide_force

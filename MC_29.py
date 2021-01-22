@@ -2635,36 +2635,34 @@ def inflate_and_wind(cloth):
         np.add.at(cloth.velocity, cloth.tridex, move[:, None])
         
         cloth.turb_count += 1
-
-
-def interference(cloth):
-    """For p1 when the surface deform mod moves the arms
-    we need to reinitialize vel cloth co and stuff."""
-    bpy.context.scene.MC_props.interference = False
     
-    print('rand interference !!!')
+
+def surface_follow(ob, avatar, frame, iteration):
+    """Used by p1 with surface deform for putting
+    the arms down."""
+    #bpy.context.scene.MC_props.interference = True
+    m = ob.modifiers.new('SF', "SURFACE_DEFORM")
+    m.target = avatar
+    bpy.ops.object.surfacedeform_bind({"object" : ob}, modifier='SF')
+    bpy.context.scene.frame_current = frame
     bpy.ops.object.modifier_apply_as_shapekey({"object" : cloth.ob}, modifier='SF')
     co = get_co_shape(cloth.ob, key='SF')
     cloth.ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set('co', co.ravel())
     
-    refresh(cloth)
+    refresh(cloth, skip=True)
     
-    cloth.velocity[:] = 0.0
-    
-    #co = get_co_shape(cloth.ob, "MC_current")
-    cloth.co = co
-
 
 def spring_basic_no_sw(cloth):
 
     # for updating after moving the arms in p1
-    if bpy.context.scene.MC_props.interference:
-        interference(cloth)
+    #if bpy.context.scene.MC_props.interference:
+        #interference(cloth, 0)
 
     # cloth.velocity[cloth.oc_move_idx] -= cloth.oc_move
     if cloth.ob.MC_props.p1_cloth:
         if cloth.iterator == 0:
-            cloth.ob.MC_props.sew_force = .001
+            cloth.ob.MC_props.sew_force = 0.001
+            cloth.ob.MC_props.shrink_grow = 1.0
 
     cloth.select_start[:] = cloth.co
     feedback_val = cloth.ob.MC_props.feedback
@@ -2861,7 +2859,31 @@ def spring_basic_no_sw(cloth):
             cloth.ob.MC_props.sew_force = .01
         if cloth.iterator == 60:
             cloth.ob.MC_props.sew_force = .05
-    
+        if cloth.iterator == 80:
+            cloth.ob.MC_props.sew_force = .1
+        if cloth.iterator == 90:
+            cloth.ob.MC_props.sew_force = .2        
+            cloth.ob.MC_props.shrink_grow = .5
+        
+        if cloth.iterator == 150:
+            surface_follow(cloth.ob, colliders[0], 70)
+            cloth.iterator = 150
+            print("ran surface follow 150")
+
+        if cloth.iterator == 170:
+            surface_follow(cloth.ob, colliders[0], 500)
+            print("ran surface follow 170")
+            cloth.iterator = 170
+            cloth.ob.MC_props.stretch_iters = 5
+            cloth.ob.MC_props.shrink_grow = 1.0
+            
+        if cloth.iterator == 250:
+            cloth.ob.MC_props.continuous = False
+        
+                    
+    print("=========================")
+    print(cloth.iterator, "iteration")
+    print("=========================")
     cloth.iterator += 1
     
 
@@ -3750,10 +3772,11 @@ def cb_cloth(self, context):
     self = ob.MC_props
     
     if ob.data.is_editmode:
-        ob.update_from_editmode()
-
+        ob.update_from_editmode()    
+    
+    # do I really need this???
     #ob.data.update() # otherwise changes to geometry then trying popping out of edit mode messes up
-
+    
     if self.cache_only:
         cloth = create_instance(ob=ob)
         id_number = ob.name
@@ -4169,8 +4192,8 @@ class McPropsObject(bpy.types.PropertyGroup):
     new_self_margin:\
     bpy.props.FloatProperty(name="New Self Margin", description="New Self collision margin", default=0.02, min=0, precision=3)
     
-    self_collide_force:\
-    bpy.props.FloatProperty(name="Self Collision Force", description="Move self collide points and tris", default=0.5, precision=3)
+    #self_collide_force:\
+    #bpy.props.FloatProperty(name="Self Collision Force", description="Self collision force", default=0.5, precision=3)
 
     #sc_vel_damping:\
     #bpy.props.FloatProperty(name="Self Collision Velocity Damping", description="Self self collisions reduces velocity", default=1.0, precision=3)
@@ -4564,7 +4587,7 @@ def update_v_norms(cloth):
     np.add.at(cloth.v_norms, cloth.v_norm_indexer, normals[cloth.v_norm_indexer1])
 
 
-def refresh(cloth):
+def refresh(cloth, skip=False):
     
     ob = cloth.ob
     
@@ -4572,7 +4595,8 @@ def refresh(cloth):
         ob.update_from_editmode()
     
     cloth.p1 = False
-    cloth.iterator = 0
+    if not skip:    
+        cloth.iterator = 0
     # target ----------
     cloth.target = None # (gets overwritten by def cb_target)
     cloth.current_cache_frame = 1 # for the cache continuous playback
@@ -4592,21 +4616,24 @@ def refresh(cloth):
 
     cloth.co = get_co_edit(ob)# + noise
     
-    # slowdowns ------------------
-    manage_vertex_groups(cloth)
-    # slowdowns ------------------
+    if not skip:
+        # slowdowns ------------------
+        manage_vertex_groups(cloth)
+        # slowdowns ------------------
 
     cloth.move_dist = np.zeros(v_count, dtype=np.float32) # used by static friction
     cloth.pin_arr = np.copy(cloth.co)
     cloth.geometry = get_mesh_counts(ob, cloth.obm)
-
-    # slowdowns ------------------
-    cloth.sew_springs = get_sew_springs(cloth)
-    # slowdowns ------------------
+    
+    if not skip:
+        # slowdowns ------------------
+        cloth.sew_springs = get_sew_springs(cloth)
+        # slowdowns ------------------
     
     if False: # need to check if this works. Used by surface forces. search for " rev " in the collision module    
         cloth.wco = np.copy(cloth.co)
         apply_in_place(cloth.ob, cloth.wco)
+
     cloth.select_start = np.copy(cloth.co)
     cloth.stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
     cloth.selected = np.array([v.select for v in cloth.obm.verts])
@@ -4623,17 +4650,20 @@ def refresh(cloth):
     cloth.total_tridex = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32) # for calculating the weights of the mean
     cloth.measure_dot = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32) # for calculating the weights of the mean
     cloth.measure_length = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32) # for calculating the weights of the mean
-    cloth.vdl = stretch_springs_basic(cloth, cloth.target)
+    
+    if not skip:    
+        cloth.vdl = stretch_springs_basic(cloth, cloth.target)
 
-    #if doing_self_collisions:
-    cloth.tridex, triobm = get_tridex_2(ob)
-    cloth.triobm = triobm
+    if not skip:
+        #if doing_self_collisions:
+        cloth.tridex, triobm = get_tridex_2(ob)
+        cloth.triobm = triobm
 
-    # for offset_cloth_tris:
-    cloth.v_norms = np.empty((cloth.co.shape[0], 3), dtype=np.float32)
-    cloth.v_norm_indexer1 = np.hstack([[f.index for f in v.link_faces] for v in triobm.verts])
-    cloth.v_norm_indexer = np.hstack([[v.index] * len(v.link_faces) for v in triobm.verts])
-    # ----------------------
+        # for offset_cloth_tris:
+        cloth.v_norms = np.empty((cloth.co.shape[0], 3), dtype=np.float32)
+        cloth.v_norm_indexer1 = np.hstack([[f.index for f in v.link_faces] for v in triobm.verts])
+        cloth.v_norm_indexer = np.hstack([[v.index] * len(v.link_faces) for v in triobm.verts])
+        # ----------------------
 
     if cloth.ob.MC_props.new_sc:
 
@@ -5041,10 +5071,10 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
                 #row.label(icon='CON_PIVOT')            
                 #row.scale_y = 0.75            
                 #row.prop(ob.MC_props, "sc_vel_damping", text="Damping", icon='CON_PIVOT')
-                row = col.row()
-                row.label(icon='CON_PIVOT')
-                row.scale_y = 0.75            
-                row.prop(ob.MC_props, "self_collide_force", text="SC Force", icon='CON_PIVOT')
+                #row = col.row()
+                #row.label(icon='CON_PIVOT')
+                #row.scale_y = 0.75            
+                #row.prop(ob.MC_props, "self_collide_force", text="SC Force", icon='CON_PIVOT')
                 row = col.row()            
                 #row = col.row()
             #col.prop(ob.MC_props, "new_sc", text="New Self Collision", icon='FULLSCREEN_EXIT')

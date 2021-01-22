@@ -169,16 +169,16 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs):
 
     w = 1 - (u+v)
     # !!!! needs some thought
-    margin = 0.0#001
+    margin = 0.0
     # !!!! ==================
     weights = np.array([w, u, v]).T
-    check = (u > margin) & (v > margin) & (w > margin)
+    check = (u >= margin) & (v >= margin) & (w >= margin)
     
     return check, weights
 
 
 def b2(sc, cloth, count):
-    print('runing b2 ob_collisions', count)
+    print('runing b2', count)
     if len(sc.big_boxes) == 0:
         print("ran out")
         return
@@ -204,7 +204,7 @@ def b2(sc, cloth, count):
     sc.big_boxes = boxes
     
 
-def generate_bounds(minc, maxc, margin):
+def generate_bounds(minc, maxc):
     """from a min corner and a max corner
     generate the min and max corner of 8 boxes"""
 
@@ -262,13 +262,17 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
 
     T = time.time()
     margin = sc.M # might be faster than >=, <=
-    #margin = 0#.00001 #sc.M # might be faster than >=, <=
-    
-    co = cloth.oc_co
+    margin = 0.0 #sc.M # might be faster than >=, <=
+
+    #co = cloth.oc_co
 
     if bounds is None:
-        b_min = np.min(co, axis=0)
-        b_max = np.max(co, axis=0)
+        #b_min = np.min(co, axis=0)
+        #b_max = np.max(co, axis=0)
+        b_min = np.min(np.min(cloth.traveling_edge_co, 0), 0)
+        b_max = np.max(np.max(cloth.traveling_edge_co, 0), 0)
+    
+    
     else:
         b_min, b_max = bounds[0], bounds[1]
 
@@ -277,15 +281,11 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
         #b_max = np.max(eco, axis=0)
         
     # bounds_8 is for use on the next iteration.
-    mid, bounds_8 = generate_bounds(b_min, b_max, margin)
+    mid, bounds_8 = generate_bounds(b_min, b_max)
     
     #mid = b_min + ((b_max - b_min) / 2)
-    #mid_ = mid + margin
-    #_mid = mid - margin
-
-    mid_ = mid + 0.0001
-    _mid = mid - 0.0001
-
+    mid_ = mid #+ margin
+    _mid = mid #- margin
 
     x_, y_, z_ = mid_[0], mid_[1], mid_[2]
     _x, _y, _z = _mid[0], _mid[1], _mid[2]
@@ -320,85 +320,85 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     eidx = np.array(eidx, dtype=np.int32)
 
     # -------------------------------
-    B = xmin[idx] < x_# + margin
+    B = xmin[idx] <= x_# + margin
     il = idx[B]
 
-    B = xmax[idx] > _x# - margin
+    B = xmax[idx] >= _x# - margin
     ir = idx[B]
     
     # edges
-    eB = exmin[eidx] < x_# + margin
+    eB = exmin[eidx] <= x_# + margin
     eil = eidx[eB]
 
-    eB = exmax[eidx] > _x# - margin
+    eB = exmax[eidx] >= _x# - margin
     eir = eidx[eB]
 
     # ------------------------------
-    B = ymax[il] > _y# - margin
+    B = ymax[il] >= _y# - margin
     ilf = il[B]
 
-    B = ymin[il] < y_# + margin
+    B = ymin[il] <= y_# + margin
     ilb = il[B]
 
-    B = ymax[ir] > _y# - margin
+    B = ymax[ir] >= _y# - margin
     irf = ir[B]
 
-    B = ymin[ir] < y_# + margin
+    B = ymin[ir] <= y_# + margin
     irb = ir[B]
     
     # edges
-    eB = eymax[eil] > _y# - margin
+    eB = eymax[eil] >= _y# - margin
     eilf = eil[eB]
 
-    eB = eymin[eil] < y_# + margin
+    eB = eymin[eil] <= y_# + margin
     eilb = eil[eB]
 
-    eB = eymax[eir] > _y# - margin
+    eB = eymax[eir] >= _y# - margin
     eirf = eir[eB]
 
-    eB = eymin[eir] < y_# + margin
+    eB = eymin[eir] <= y_# + margin
     eirb = eir[eB]
 
     # ------------------------------
-    B = zmax[ilf] > _z# - margin
+    B = zmax[ilf] >= _z# - margin
     ilfu = ilf[B]
-    B = zmin[ilf] < z_# + margin
+    B = zmin[ilf] <= z_# + margin
     ilfd = ilf[B]
 
-    B = zmax[ilb] > _z# - margin
+    B = zmax[ilb] >= _z# - margin
     ilbu = ilb[B]
-    B = zmin[ilb] < z_# + margin
+    B = zmin[ilb] <= z_# + margin
     ilbd = ilb[B]
 
-    B = zmax[irf] > _z# - margin
+    B = zmax[irf] >= _z# - margin
     irfu = irf[B]
-    B = zmin[irf] < z_# + margin
+    B = zmin[irf] <= z_# + margin
     irfd = irf[B]
 
-    B = zmax[irb] > _z# - margin
+    B = zmax[irb] >= _z# - margin
     irbu = irb[B]
-    B = zmin[irb] < z_# + margin
+    B = zmin[irb] <= z_# + margin
     irbd = irb[B]
 
     # edges
-    eB = ezmax[eilf] > _z# - margin
+    eB = ezmax[eilf] >= _z# - margin
     eilfu = eilf[eB]
-    eB = ezmin[eilf] < z_# + margin
+    eB = ezmin[eilf] <= z_# + margin
     eilfd = eilf[eB]
 
-    eB = ezmax[eilb] > _z# - margin
+    eB = ezmax[eilb] >= _z# - margin
     eilbu = eilb[eB]
-    eB = ezmin[eilb] < z_# + margin
+    eB = ezmin[eilb] <= z_# + margin
     eilbd = eilb[eB]
 
-    eB = ezmax[eirf] > _z# - margin
+    eB = ezmax[eirf] >= _z# - margin
     eirfu = eirf[eB]
-    eB = ezmin[eirf] < z_# + margin
+    eB = ezmin[eirf] <= z_# + margin
     eirfd = eirf[eB]
 
-    eB = ezmax[eirb] > _z# - margin
+    eB = ezmax[eirb] >= _z# - margin
     eirbu = eirb[eB]
-    eB = ezmin[eirb] < z_# + margin
+    eB = ezmin[eirb] <= z_# + margin
     eirbd = eirb[eB]    
 
     boxes = [ilbd, irbd, ilfd, irfd, ilbu, irbu, ilfu, irfu]
@@ -419,23 +419,30 @@ def total_bounds(sc, cloth):
     bool = cloth.tris6_bool
     bool[:] = True
     
-    box_min = np.min(cloth.oc_co, axis=0) - sc.M
-    box_max = np.max(cloth.oc_co, axis=0) + sc.M
+    #box_min = np.min(cloth.oc_co, axis=0)# - sc.M
+    #box_max = np.max(cloth.oc_co, axis=0)# + sc.M
+    box_min = np.min(np.min(cloth.traveling_edge_co, axis=0), axis=0)# - sc.M
+    box_max = np.max(np.max(cloth.traveling_edge_co, axis=0), axis=0)# + sc.M
     
-    bool[sc.txmax < box_min[0]] = False
-    bool[sc.txmin > box_max[0]] = False
+    bool[sc.txmax <= box_min[0]] = False
+    bool[sc.txmin >= box_max[0]] = False
 
-    bool[sc.tymax < box_min[1]] = False
-    bool[sc.tymin > box_max[1]] = False
+    bool[sc.tymax <= box_min[1]] = False
+    bool[sc.tymin >= box_max[1]] = False
 
-    bool[sc.tzmax < box_min[2]] = False
-    bool[sc.tzmin > box_max[2]] = False
+    bool[sc.tzmax <= box_min[2]] = False
+    bool[sc.tzmin >= box_max[2]] = False
+
+    return bool
+
+
+def object_collisions_7(sc, margin=0.0, cloth=None):
     
-    return cloth.oc_tris_six[bool]
-
-
-def object_collisions_7(sc, margin=0.1, cloth=None):
-
+    margin = 0.0
+    #margin = 0.0
+    
+    #print(cloth.traveling_edge_co[0])
+    
     tx = cloth.oc_tris_six[:, :, 0]
     ty = cloth.oc_tris_six[:, :, 1]
     tz = cloth.oc_tris_six[:, :, 2]
@@ -459,23 +466,29 @@ def object_collisions_7(sc, margin=0.1, cloth=None):
     sc.tzmin = tzmin
 
     # cloth box cull
-    tris6 = total_bounds(sc, cloth)
+    cloth.boxboo = total_bounds(sc, cloth)
+    tris6 = cloth.oc_tris_six[cloth.boxboo]
+
+    sc.finished = False
     sc.tris6 = tris6
     if tris6.shape[0] == 0:
+        sc.finished = True
         return
     
     tx = tris6[:, :, 0]
     ty = tris6[:, :, 1]
     tz = tris6[:, :, 2]
 
-    txmax = np.max(tx, axis=1)# + margin
-    txmin = np.min(tx, axis=1)# - margin
+    margin = 0.00001
 
-    tymax = np.max(ty, axis=1)# + margin
-    tymin = np.min(ty, axis=1)# - margin
+    txmax = np.max(tx, axis=1) + margin
+    txmin = np.min(tx, axis=1) - margin
 
-    tzmax = np.max(tz, axis=1)# + margin
-    tzmin = np.min(tz, axis=1)# - margin
+    tymax = np.max(ty, axis=1) + margin
+    tymin = np.min(ty, axis=1) - margin
+
+    tzmax = np.max(tz, axis=1) + margin
+    tzmin = np.min(tz, axis=1) - margin
 
     sc.txmax = txmax
     sc.txmin = txmin
@@ -487,25 +500,22 @@ def object_collisions_7(sc, margin=0.1, cloth=None):
     sc.tzmin = tzmin
 
     # edge bounds:
-    ex = sc.edges[:, :, 0]
-    ey = sc.edges[:, :, 1]
-    ez = sc.edges[:, :, 2]
+    ex = cloth.traveling_edge_co[:, :, 0]
+    ey = cloth.traveling_edge_co[:, :, 1]
+    ez = cloth.traveling_edge_co[:, :, 2]
 
-    sc.exmin = np.min(ex, axis=1)# - margin
-    sc.eymin = np.min(ey, axis=1)# - margin
-    sc.ezmin = np.min(ez, axis=1)# - margin
+    #margin = 0.1
+
+    sc.exmin = np.min(ex, axis=1) - margin
+    sc.eymin = np.min(ey, axis=1) - margin
+    sc.ezmin = np.min(ez, axis=1) - margin
     
-    sc.exmax = np.max(ex, axis=1)# + margin
-    sc.eymax = np.max(ey, axis=1)# + margin
-    sc.ezmax = np.max(ez, axis=1)# + margin
+    sc.exmax = np.max(ex, axis=1) + margin
+    sc.eymax = np.max(ey, axis=1) + margin
+    sc.ezmax = np.max(ez, axis=1) + margin
         
-    #timer(time.time()-T, "self col 5")
-    # !!! can do something like check the octree to make sure the boxes are smaller
-    #       to know if we hit a weird case where we're no longer getting fewer in boxes
-    #sc.box_max = 150
     tfull, efull, bounds = octree_et(sc, margin=0.0, cloth=cloth)
 
-    #T = time.time()
     for i in range(len(tfull)):
         t = tfull[i]
         e = efull[i]
@@ -543,12 +553,7 @@ def object_collisions_7(sc, margin=0.1, cloth=None):
             for b in sc.big_boxes:
                 sc.small_boxes.append(b)
             break
-        count += 1    
-
-    #if sc.report:
-    if 0:
-        print(len(sc.big_boxes), "how many big boxes")
-        print(len(sc.small_boxes), "how many small boxes")
+        count += 1
         
     for en, b in enumerate(sc.small_boxes):
         trs = np.array(b[0], dtype=np.int32)
@@ -556,14 +561,6 @@ def object_collisions_7(sc, margin=0.1, cloth=None):
         
         if ed.shape[0] == 0:
             continue
-        
-        tris = sc.tris6[trs]
-        eds = sc.edges[ed]
-        
-        #print('checking box', en, b[0].shape[0], b[1].shape[0])
-        # detect link faces and broadcast
-        #nlf_0 = cloth.sc_edges[ed][:, 0] == cloth.oc_total_tridex[trs][:, :, None]
-        #ab = np.any(nlf_0, axis=1)
 
         rse = np.tile(ed, trs.shape[0])
         rse.shape = (trs.shape[0], ed.shape[0])
@@ -573,73 +570,44 @@ def object_collisions_7(sc, margin=0.1, cloth=None):
         re = rse#[~ab] # repeated edges with link faces removed
         rt = rst#[~ab] # repeated triangles to match above edges
                 
-        in_x = txmax[rt] > sc.exmin[re]
+        in_x = txmax[rt] >= sc.exmin[re]
         rt, re = rt[in_x], re[in_x]
 
-        in_x2 = txmin[rt] < sc.exmax[re]
+        in_x2 = txmin[rt] <= sc.exmax[re]
         rt, re = rt[in_x2], re[in_x2]
 
-        in_y = tymax[rt] > sc.eymin[re]
+        in_y = tymax[rt] >= sc.eymin[re]
         rt, re = rt[in_y], re[in_y]
 
-        in_y2 = tymin[rt] < sc.eymax[re]
+        in_y2 = tymin[rt] <= sc.eymax[re]
         rt, re = rt[in_y2], re[in_y2]
 
-        in_z = tzmin[rt] < sc.ezmax[re]
+        in_z = tzmin[rt] <= sc.ezmax[re]
         rt, re = rt[in_z], re[in_z]
         
-        in_z2 = tzmax[rt] > sc.ezmin[re]
+        in_z2 = tzmax[rt] >= sc.ezmin[re]
         rt, re = rt[in_z2], re[in_z2]
-
-        #timer(time.time()-T, 'edge bounds')
-        
-        T = time.time()
         
         if rt.shape[0] > 0:
             
             sc.ees += re.tolist()
             sc.trs += rt.tolist()
         
-        # testing !!!!!!!
-        #if en == 0:
-        if False:
-            print(rt)
-            print()
-            print()
-            print('----------')
-            print('ed')
-            print(ed.shape[0], 'ed shape')
-            print(trs.shape[0], 'trs')
-            
-            egg = bpy.data.objects['collide']
-            ring = bpy.data.objects['Cube']
-            
-            for p in tfull[0]:
-                egg.data.polygons[p].select = True
-            for v in ed:
-                print('======================')
-                print('======================')
-                print('======================')
-                print('======================')
-                print('======================')
-                print(v, '======================')
-                ring.data.vertices[v].select = True
-            
-            egg.data.update()
-            ring.data.update()
-            
-            #error
-
 
 def ray_check(sc, ed, trs, cloth):
     
-    
     # ed is a list object so we convert it for indexing the points
     # trs indexes the tris
+    #edidx = np.array(ed, dtype=np.int32)
+
+    #cloth.oc_tris_six[:, :3] = (cloth.last_co - cloth.inner_norms)[cloth.oc_total_tridex]
+
     edidx = np.array(ed, dtype=np.int32)
+    trs = np.array(trs, dtype=np.int32)
+    
     
     # e is the start co and current co of the cloth paird in Nx2x3    
-    e = sc.edges[ed]
+    e = cloth.traveling_edge_co[edidx]
 
     t = sc.tris6[trs]
     
@@ -656,44 +624,60 @@ def ray_check(sc, ed, trs, cloth):
     vecs = co - ori
     dots = np.einsum('ij,ij->i', vecs, un)
     
-    switch = dots < 0
-    
-    check, weights = inside_triangles(t[:, :3][switch], co[switch], margin= -sc.M)
-    start_check, start_weights = inside_triangles(t[:, :3][switch], start_co[switch], margin= -sc.M)
-    travel = un[switch][check] * -dots[switch][check][:, None]
+    switch = dots <= 0 # why does this work????
+            
+    check, weights = inside_triangles(t[:, :3][switch], co[switch])
+    start_check, start_weights = inside_triangles(t[:, :3][switch], start_co[switch], margin= 0.0)
 
-    weight_plot = t[:, 3:][switch][check] * start_weights[check][:, :, None]
+    #pcols = edidx[switch][check]
 
-    loc = np.sum(weight_plot, axis=1)
-    
-    pcols = edidx[switch][check]
+    if cloth.static:    
+        travel = un[switch][check] * -dots[switch][check][:, None]
+        weight_plot = t[:, 3:][switch][check] * start_weights[check][:, :, None]
+        loc = np.sum(weight_plot, axis=1)
+        pcols = edidx[switch][check]
+
+    else:
+        travel = un[switch] * -dots[switch][:, None]
+        weight_plot = t[:, 3:][switch] * start_weights[:, :, None]
+        loc = np.sum(weight_plot, axis=1)
+        pcols = edidx[switch]
+
     cco = sc.fco[pcols]
     pl_move = loc - cco
 
-    # !!! for the self collide I could skip all the face check tile stuff
-    # and just use the ob collide module then use a lookup
-    # at the very end to avoid moving points that are part of
-    # the face. This is based on the assumption that the big slowdown
-    # is cause by the comparing of faces to the points they are in.
-    # might be wrong but worth a check.
-    
     # static friction
     ob_settings = not cloth.ob.MC_props.override_settings
+    
     if ob_settings:
-        trsidx = np.array(trs, dtype=np.int32)
-        tcols = trsidx[switch][check]
-        
-        fr = cloth.total_friction[tcols] # put in a static friction method !!! when the force is greater than a length it pulls otherwise it sticks.
+        #trsidx = np.array(trs, dtype=np.int32)
+        if cloth.static:    
+            tcols = trs[switch][check]
+        else:    
+            tcols = trs[switch]
+    
+        fr = cloth.total_friction[cloth.boxboo][tcols] # put in a static friction method !!! when the force is greater than a length it pulls otherwise it sticks.
+
         move = (travel * (1 - fr)) + (pl_move * fr)
         
-        #print(fr)
-        
-        st = (cloth.move_dist[pcols] < cloth.total_static[tcols])
+        st = (cloth.move_dist[pcols] < cloth.total_static[cloth.boxboo][tcols])
         move[st] = pl_move[st]
 
         rev = revert_rotation(cloth.ob, move)
+
+        if False:
+            lens = np.sqrt(np.einsum('ij,ij->i', rev, rev))
+            uni, inv, counts = np.unique(pcols, return_inverse=True, return_counts=True)
+            stretch_array = np.zeros(uni.shape[0], dtype = np.float32)
+            np.add.at(stretch_array, inv, lens)
+            weights = lens / stretch_array[inv]
+            rev *= (weights[:, None])# * .777)    
+
+            ntn = np.nan_to_num(rev)
+            np.add.at(cloth.co, pcols, ntn)
+            
         cloth.co[pcols] += rev    
-    
+
         return
 
     fr = cloth.object_friction # put in a static friction method !!! when the force is greater than a length it pulls otherwise it sticks.
@@ -716,23 +700,30 @@ class ObjectCollide():
         fco = apply_transforms(cloth.ob, cloth.co)
         self.fco = fco
         
-        cloth.oc_co[:cloth.v_count] = sco
-        cloth.oc_co[cloth.v_count:] = fco
+        #cloth.oc_co[:cloth.v_count] = sco
+        #cloth.oc_co[cloth.v_count:] = fco
+
+        cloth.traveling_edge_co[:, 0] = sco
+        cloth.traveling_edge_co[:, 1] = fco
         # if static:
             # should make tris six into tries three here using just cloth.total_co
         
-        cloth.oc_tris_six[:, :3] = cloth.last_co[cloth.oc_total_tridex]
+        cloth.oc_tris_six[:, :3] = (cloth.last_co + cloth.inner_norms)[cloth.oc_total_tridex]
         cloth.oc_tris_six[:, 3:] = cloth.total_co[cloth.oc_total_tridex]
-
+        
+        #print(cloth.oc_tris_six.shape, "shape")
         # -----------------------
 
-        self.box_max = cloth.ob.MC_props.sc_box_max        
+        #self.box_max = cloth.ob.MC_props.sc_box_max        
+        self.box_max = 500#cloth.ob.MC_props.sc_box_max        
         
-        #self.M = cloth.OM
-        self.M = 0.0#cloth.OM
+        self.M = cloth.OM
         #self.force = cloth.ob.MC_props.self_collide_force
         self.tris = cloth.oc_tris_six
-        self.edges = cloth.oc_co[cloth.sc_edges]
+        #self.edges = cloth.oc_co[cloth.sc_edges]
+        #print(self.edges[0], "original")
+        #print(cloth.traveling_edge_co[0], "traveling")
+        #self.edges = cloth.traveling_edge_co
         self.big_boxes = [] # boxes that still need to be divided
         self.small_boxes = [] # finished boxes less than the maximum box size
         self.trs = []
@@ -744,7 +735,9 @@ def detect_collisions(cloth):
     sc = ObjectCollide(cloth)
 
     object_collisions_7(sc, sc.M, cloth)
-
+    if sc.finished:
+        return
+    
     ray_check(sc, sc.ees, sc.trs, cloth)
     
 

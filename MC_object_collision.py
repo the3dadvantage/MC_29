@@ -178,7 +178,7 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs):
 
 
 def b2(sc, cloth, count):
-    print('runing b2', count)
+    #print('running b2', count)
     if len(sc.big_boxes) == 0:
         print("ran out")
         return
@@ -630,6 +630,7 @@ def ray_check(sc, ed, trs, cloth):
     start_check, start_weights = inside_triangles(t[:, :3][switch], start_co[switch], margin= 0.0)
 
     #pcols = edidx[switch][check]
+    cloth.static = True
 
     if cloth.static:    
         travel = un[switch][check] * -dots[switch][check][:, None]
@@ -648,7 +649,6 @@ def ray_check(sc, ed, trs, cloth):
 
     # static friction
     ob_settings = not cloth.ob.MC_props.override_settings
-    
     if ob_settings:
         #trsidx = np.array(trs, dtype=np.int32)
         if cloth.static:    

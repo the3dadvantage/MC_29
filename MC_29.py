@@ -1863,10 +1863,10 @@ class Collider():
         oc_total_tridex = np.empty((0,3), dtype=np.int32)
         cloth.oc_tri_counts = []        
         shift = 0
+        #cloth.ob_ims = []# object inner margins
         for i, c in enumerate(colliders):
-            if c.data.is_editmode:
+            #if c.data.is_editmode:
                 #c.update_from_editmode()
-                pass
                 
             abco, proxy, prox = absolute_co(c)        
             normals = get_proxy_normals(ob=c, proxy=proxy)
@@ -2779,7 +2779,7 @@ def spring_basic_no_sw(cloth):
 
         # checing if the colliders move...
             static_check = True
-            static_check = False
+            #static_check = False
             if static_check:
                 #ccdif = np.abs(cloth.last_co - cloth.total_co)
                 ccdif = cloth.last_co - cloth.total_co
@@ -2788,6 +2788,7 @@ def spring_basic_no_sw(cloth):
                 if np.all(np.abs(ccdif) < 1):
                     cloth.static = True
                 
+                #print(cloth.static)
             #if new_sc:
                 #MC_new_self.detect_collisions(cloth)
                 #MC_object_collision.detect_collisions(cloth)
@@ -2802,7 +2803,7 @@ def spring_basic_no_sw(cloth):
             MC_object_collision.detect_collisions(cloth)
             #print(cloth.last_co.shape)
 
-            cloth.last_co[:] = cloth.total_co
+            cloth.last_co[:] = cloth.total_co - cloth.inner_norms
             #if inner_m:
                 #cloth.last_co += cloth.inner_norms
             # --------------------------------

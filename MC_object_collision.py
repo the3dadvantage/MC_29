@@ -601,6 +601,7 @@ def ray_check(sc, ed, trs, cloth):
     #edidx = np.array(ed, dtype=np.int32)
 
     #cloth.oc_tris_six[:, :3] = (cloth.last_co - cloth.inner_norms)[cloth.oc_total_tridex]
+    #cloth.oc_tris_six[:, :3] -= cloth.inner_norms[cloth.oc_total_tridex]
 
     edidx = np.array(ed, dtype=np.int32)
     trs = np.array(trs, dtype=np.int32)
@@ -625,12 +626,13 @@ def ray_check(sc, ed, trs, cloth):
     dots = np.einsum('ij,ij->i', vecs, un)
     
     switch = dots <= 0 # why does this work????
+    #switch = dots <= cloth.ob.MC_p# why does this work????
             
     check, weights = inside_triangles(t[:, :3][switch], co[switch])
     start_check, start_weights = inside_triangles(t[:, :3][switch], start_co[switch], margin= 0.0)
 
     #pcols = edidx[switch][check]
-    cloth.static = True
+    #cloth.static = True
 
     if cloth.static:    
         travel = un[switch][check] * -dots[switch][check][:, None]

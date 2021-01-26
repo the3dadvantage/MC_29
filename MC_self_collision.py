@@ -648,6 +648,11 @@ def ray_check_oc(sc, ed, trs, cloth):
 
         ntn = np.nan_to_num(joined_travel)
         np.add.at(cloth.co, joined, ntn)
+
+        fr = cloth.ob.MC_props.sc_friction
+        if fr > 0:
+            cloth.velocity[co_idx] *= (1 - fr)
+
         
         return        
         back_tris = True

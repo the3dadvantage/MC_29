@@ -965,9 +965,7 @@ def measure_linear_bend(cloth):
     """Takes a set of coords and an edge idx and measures segments"""
     l = cloth.sp_ls # left side of the springs (Full moved takes the place of the right side)
     a,b,c = np.unique(l, return_counts=True, return_inverse=True)
-    
-    cloth.bend_counts = c
-    
+
     x = c[b]
     cloth.bend_multiplier = ((x - 2) / 2) + 2
     return
@@ -1310,9 +1308,8 @@ def abstract_bend(cloth):
 def abstract_bend_(cloth):
     # weighted average method
     # !!! this might be better. Need to test
-
     dynamic(cloth)
-    stretch = cloth.ob.MC_props.bend * 0.5
+    stretch = cloth.ob.MC_props.bend
     cv = (cloth.full_moved - cloth.co[cloth.sp_ls])
     lens = np.sqrt(np.einsum('ij,ij->i', cv, cv))
     stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
@@ -1321,7 +1318,8 @@ def abstract_bend_(cloth):
     cv *= w[:, None]
     
     np.add.at(cloth.co, cloth.sp_ls, np.nan_to_num(cv))
-    
+
+
 #                                                                #
 #                                                                #
 # ------------------- end abstract bend data ------------------- #
@@ -2833,16 +2831,12 @@ def spring_basic_no_sw(cloth):
     #rt_(num='bend springs sw')
     update_pins_select_sew_surface(cloth) # also hooks
     
-    cloth.velocity[:,2] += cloth.ob.MC_props.gravity * 0.001 # so after *= vel so it can still fall at zero vel
     v_move = cloth.co - cloth.vel_zero
     cloth.velocity += v_move
     cloth.velocity *= cloth.ob.MC_props.velocity
 
     cloth.velocity *= 1 - cloth.drag
-    
-
     cloth.velocity[:,2] += cloth.ob.MC_props.gravity * 0.001 # so after *= vel so it can still fall at zero vel
-
     inflate_and_wind(cloth)
     # for static friction in MC_object_collision.py
     np.einsum('ij,ij->i', cloth.velocity, cloth.velocity, out=cloth.move_dist)

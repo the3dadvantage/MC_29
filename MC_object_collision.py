@@ -610,10 +610,17 @@ def ray_check(sc, ed, trs, cloth):
     # e is the start co and current co of the cloth paird in Nx2x3    
     e = cloth.traveling_edge_co[edidx]
 
-    t = sc.tris6[trs]
     
     start_co = e[:, 0]
+
+    #start_co -= cloth.inner_norms[cloth.boxboo][edidx]
+
     co = e[:, 1]
+    
+    #sc.tris6[:, :3] = (cloth.last_co + cloth.inner_norms)[cloth.oc_total_tridex][cloth.boxboo]        
+    cloth.oc_tris_six[:, :3] = cloth.last_co[cloth.oc_total_tridex]
+    t = cloth.oc_tris_six[cloth.boxboo][trs]
+    #t = sc.tris6[trs]
     
     ori = t[:, 3]
     t1 = t[:, 4] - ori
@@ -627,8 +634,9 @@ def ray_check(sc, ed, trs, cloth):
     
     switch = dots <= 0 # why does this work????
     #switch = dots <= cloth.ob.MC_p# why does this work????
-            
+    
     check, weights = inside_triangles(t[:, :3][switch], co[switch])
+    
     start_check, start_weights = inside_triangles(t[:, :3][switch], start_co[switch], margin= 0.0)
 
     #pcols = edidx[switch][check]
@@ -637,6 +645,7 @@ def ray_check(sc, ed, trs, cloth):
     if cloth.static:    
         travel = un[switch][check] * -dots[switch][check][:, None]
         weight_plot = t[:, 3:][switch][check] * start_weights[check][:, :, None]
+        #weight_plot = t[:, 3:][switch][check] * weights[check][:, :, None]
         loc = np.sum(weight_plot, axis=1)
         pcols = edidx[switch][check]
 
@@ -711,6 +720,7 @@ class ObjectCollide():
             # should make tris six into tries three here using just cloth.total_co
         
         cloth.oc_tris_six[:, :3] = (cloth.last_co + cloth.inner_norms)[cloth.oc_total_tridex]
+        #cloth.oc_tris_six[:, :3] = cloth.last_co[cloth.oc_total_tridex]
         cloth.oc_tris_six[:, 3:] = cloth.total_co[cloth.oc_total_tridex]
         
         #print(cloth.oc_tris_six.shape, "shape")

@@ -3242,8 +3242,8 @@ def cloth_physics(ob, cloth):#, colliders):
         """ =============== FORCES EDIT MODE ================ """
 
         # set coords to current edit mode bmesh
+        cloth.obm.verts.ensure_lookup_table()
         for i, j in enumerate(cloth.co):
-            cloth.obm.verts.ensure_lookup_table()
             cloth.obm.verts[i].co = j
 
         if cloth.ob.MC_props.cache:

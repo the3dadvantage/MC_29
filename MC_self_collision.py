@@ -685,7 +685,7 @@ def ray_check_oc(sc, ed, trs, cloth):
         cloth.velocity[co_idx] *= (1 - ve)
         
 #        if False: # causes instabilities when multiple layers compete.
-#            pl_move = (loc - cloth.co[co_idx]) * fr
+#            pl_move = (loc - cloth.co[co_idx]) * fr * .2
 
 #            lens = np.sqrt(np.einsum('ij,ij->i', pl_move, pl_move))
 #            #uni, inv, counts = np.unique(co_idx, return_inverse=True, return_counts=True)

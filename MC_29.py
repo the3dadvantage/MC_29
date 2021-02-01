@@ -1627,7 +1627,26 @@ def get_sew_springs(cloth):
     of sew verts. Groups areas using a sort of tree where
     multiple edges would bring sew verts together."""
     rt_()
-    
+
+    if cloth.ob.MC_props.simple_sew:
+        print("used simple sew")
+        obm = cloth.obm
+        cloth.sew_fancy_indexer = []
+        cloth.sew_add_indexer = []
+        #cloth.simple_sew_v = []
+        #cloth.simple_sew_fancy = []
+        for v in obm.verts:
+            le = [e.other_vert(v).index for e in v.link_edges if len(e.link_faces) == 0]
+            cloth.sew_add_indexer += [v.index] * len(le)
+            cloth.sew_fancy_indexer += le
+            
+        #print(cloth.simple_sew_v, "sew verts")
+        #print(cloth.simple_sew_fancy, "sew fancy")
+        #print('done with simple sew')
+        if len(cloth.sew_fancy_indexer) != 0:
+            cloth.sew = True
+        return
+        
     obm = cloth.obm    
     cloth.sew = True
     cull = []
@@ -1730,14 +1749,167 @@ def hook_force(cloth):
     cloth.co[idx] = hook_co    
 
 
-def sew_force(cloth):
+def sew_v_fancy(cloth):
+    #print(cloth.sew_mean_idx)    
+    #print(cloth.all_sew)
+    if cloth.ob.MC_props.simple_sew:
+        return
+    
     if not cloth.sew:
         return
+    
+    npas = np.array(cloth.all_sew)
+    npsm = np.array(cloth.sew_mean_idx)
+    print(npas)
+    sew_add_indexer = []
+    sew_fancy_indexer = []
+    
+    '''
+    [0, 0, 0, 0, 1, 1] This represents the 0 group and the 1 group
+    These points all sew together to the same spot.
+    
+    [ 1  9 21 29  5 25]
+    corresponds to the above. 1, 9, 21, 29 all come together.
+    5 and 25 come together.
+    
+    need an array like v_fancy. 
+    for the 1 need [9, 21, 9
+    for the 9 need [1, 21, 29
+    can stack them for add.at like [9, 21, 9, 1, 21, 29
+    need to stack them like [1, 1, 1, 9, 9, 9
+    '''
+    
+    for i, j in enumerate(cloth.sew_mean_idx):
+        meh = npas[npsm == j]        
+        sew_add_indexer += [[npas[i]] * (meh.shape[0] - 1)]
+        sew_fancy_indexer += [meh[meh != [npas[i]]]]
+    
+
+    
+    cloth.sew_add_indexer = np.hstack(sew_add_indexer)
+    cloth. sew_fancy_indexer = np.hstack(sew_fancy_indexer)
+        
+    print(cloth.sew_add_indexer)        
+    print(cloth.sew_fancy_indexer)        
+        
+
+
+
+
+def sew_force_1(cloth):
+    if not cloth.sew:
+        return
+    
+    tl = cloth.ob.MC_props.target_sew_length / 2
+    
     cloth.sew_mean[:] = 0.0
     np.add.at(cloth.sew_mean, cloth.sew_mean_idx, cloth.co[cloth.all_sew])
     means = cloth.sew_mean / cloth.sew_div
-    vecs = (means[cloth.sew_mean_idx] - cloth.co[cloth.all_sew]) * cloth.ob.MC_props.sew_force
-    cloth.co[cloth.all_sew] += vecs
+    vecs = (means[cloth.sew_mean_idx] - cloth.co[cloth.all_sew]) #* cloth.ob.MC_props.sew_force
+    
+    
+    if cloth.ob.MC_props.self_collide:
+        if cloth.ob.MC_props.self_collide_margin > tl * 2:
+            tl = cloth.ob.MC_props.self_collide_margin / 2
+    
+    
+    if tl != 0:
+        l = np.sqrt(np.einsum('ij,ij->i', vecs, vecs))
+        move_l = (l - tl) * cloth.ob.MC_props.sew_force
+        vecs *= ((l - tl) / l)[:, None]
+
+
+    nn = np.nan_to_num(vecs)# * cloth.ob.MC_props.sew_force
+    #np.add.at(cloth.co, cloth.all_sew, nn)
+    cloth.co[cloth.all_sew] += vecs * cloth.ob.MC_props.sew_force
+    print(cloth.all_sew)
+    print(cloth.sew_mean_idx, "mean idx")
+    #print(np.unique(cloth.all_sew).shape, "uin")
+    
+
+def sew_force(cloth):
+    if not cloth.sew:
+        return
+    #print(cloth.sew_add_indexer)        
+    #print(cloth.sew_fancy_indexer)
+
+    tl = cloth.ob.MC_props.target_sew_length / 2
+
+    if cloth.ob.MC_props.self_collide:
+        if cloth.ob.MC_props.self_collide_margin > tl * 2:
+            tl = cloth.ob.MC_props.self_collide_margin * 1.001
+
+
+    if tl != 0:
+        vecs = cloth.co[cloth.sew_fancy_indexer] - cloth.co[cloth.sew_add_indexer]
+        l = np.sqrt(np.einsum('ij,ij->i', vecs, vecs))
+        move_l = (l - tl)# * cloth.ob.MC_props.sew_force
+        vecs *= ((l - tl) / l)[:, None]
+
+        nn = np.nan_to_num(vecs) * (cloth.ob.MC_props.sew_force * .5)
+        np.add.at(cloth.co, cloth.sew_add_indexer, nn)
+
+        return
+
+    cloth.sew_mean[:] = 0.0
+    np.add.at(cloth.sew_mean, cloth.sew_mean_idx, cloth.co[cloth.all_sew])
+    means = cloth.sew_mean / cloth.sew_div
+    vecs = (means[cloth.sew_mean_idx] - cloth.co[cloth.all_sew])
+
+    nn = np.nan_to_num(vecs)# * cloth.ob.MC_props.sew_force
+    #np.add.at(cloth.co, cloth.all_sew, nn)
+    cloth.co[cloth.all_sew] += vecs * cloth.ob.MC_props.sew_force
+    
+    
+    #consider doing the whole weights thing to make it
+    #    more stable.
+
+    return
+    
+    stretch = cloth.ob.MC_props.sew_force
+    #push = cloth.ob.MC_props.push
+    push = 1
+    
+    # !!! Optimize here ============================================
+    # measure source
+    v, d, l = ()
+
+    # (current vec, dot, length)
+    cv = measure_edges(cloth.co, cloth.basic_set, cloth) # from current cloth state
+    cd = cloth.measure_dot
+    cl = cloth.measure_length
+
+    move_l = (cl - l) * stretch
+
+    if not cloth.skip_stretch_wieght:
+        move_l *= cloth.stretch_group_mult.ravel()
+
+    # separate push springs
+    if push != 1:
+        push_springs = move_l < 0
+        move_l[push_springs] *= push
+
+    # !!! here we could square move_l to accentuate bigger stretch
+    # !!! see if it solves better.
+
+    # mean method -------------------
+    cloth.stretch_array[:] = 0.0
+
+    rock_hard_abs = np.abs(move_l)
+    np.add.at(cloth.stretch_array, cloth.basic_v_fancy, rock_hard_abs)
+    weights = rock_hard_abs / cloth.stretch_array[cloth.basic_v_fancy]
+    # mean method -------------------
+
+    # apply forces ------------------
+    #if False:
+    move = cv * (move_l / cl)[:,None]
+
+    move *= weights[:,None]
+
+    np.add.at(cloth.co, cloth.basic_v_fancy, np.nan_to_num(move))
+
+
+    
     
 
 def get_springs_2(cloth):
@@ -2712,8 +2884,8 @@ def spring_basic_no_sw(cloth):
             cloth.ob.MC_props.shrink_grow = .7
             cloth.ob.MC_props.gravity = 1.0
         
-        #if cloth.iterator == 43:
-            #cloth.velocity[:] = 0.0
+        if cloth.iterator == 40:
+            cloth.velocity[:] = 0.0
             
         if cloth.iterator == 50:
             surface_follow(cloth, colliders[0], 0.8)
@@ -2930,11 +3102,11 @@ def spring_basic_no_sw(cloth):
         extra_bend = True
         #extra_bend = False
         
-        if cloth.ob.MC_props.p1_cloth:
-            if cloth.ob.MC_props.bend > 0:
-                for i in range(3):
+        #if cloth.ob.MC_props.p1_cloth:
+            #if cloth.ob.MC_props.bend > 0:
+                #for i in range(3):
 
-                    abstract_bend(cloth)
+                    #abstract_bend(cloth)
                     #sew_force(cloth)
     #rt_(num='bend springs sw')
     
@@ -3264,9 +3436,9 @@ def cloth_physics(ob, cloth):#, colliders):
                 cloth.ob.data.vertices.foreach_get('select', cloth.selected)
 
 
-            area = next(area for area in bpy.context.screen.areas if area.type == 'VIEW_3D')
-            space = next(space for space in area.spaces if space.type == 'VIEW_3D')
-            space.viewport_shade = 'RENDERED'  # set the viewport shading
+            #area = next(area for area in bpy.context.screen.areas if area.type == 'VIEW_3D')
+            #space = next(space for space in area.spaces if space.type == 'VIEW_3D')
+            #space.viewport_shade = 'RENDERED'  # set the viewport shading
 
 
         """ =============== FORCES EDIT MODE ================ """
@@ -4288,6 +4460,9 @@ class McPropsObject(bpy.types.PropertyGroup):
     p1_cloth:\
     bpy.props.BoolProperty(name="p1 cloth", description="we are running in p1", default=False)
 
+    simple_sew:\
+    bpy.props.BoolProperty(name="Simple Sew", description="Basic sew springs for p1", default=False)
+
     is_hook:\
     bpy.props.BoolProperty(name="Hook Object", description="This object is used as a hook", default=False)
 
@@ -4408,6 +4583,10 @@ class McPropsObject(bpy.types.PropertyGroup):
     # Sewing
     sew_force:\
     bpy.props.FloatProperty(name="Sew Force", description="Shrink Sew Edges", default=0.1, min=0, max=1, soft_min= -100, soft_max=100, precision=3)
+
+    # Sewing
+    target_sew_length:\
+    bpy.props.FloatProperty(name="Target Sew Length", description="Shrink Sew Edges to this Length", default=0.0, min=0, precision=3)
 
     surface_follow_selection_only:\
     bpy.props.BoolProperty(name="Use Selected Faces", description="Bind only to selected faces", default=False)
@@ -4747,7 +4926,9 @@ def refresh(cloth, skip=False):
     
     if not skip:
         # slowdowns ------------------
+        cloth.sew = False
         cloth.sew_springs = get_sew_springs(cloth)
+        sew_v_fancy(cloth)
         # slowdowns ------------------
     
     if False: # need to check if this works. Used by surface forces. search for " rev " in the collision module    
@@ -5405,7 +5586,8 @@ class PANEL_PT_modelingClothSewing(PANEL_PT_MC_Master, bpy.types.Panel):
             col = layout.column(align=True)
             col.scale_y = 1
             col.label(text='Sewing')
-            col.prop(ob.MC_props, "sew_force", text="sew_force")
+            col.prop(ob.MC_props, "sew_force", text="Sew Force")
+            col.prop(ob.MC_props, "target_sew_length", text="Target Length")
 
             box = col.box()
             box.scale_y = 2

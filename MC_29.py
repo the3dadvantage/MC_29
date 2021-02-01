@@ -2884,8 +2884,8 @@ def spring_basic_no_sw(cloth):
             cloth.ob.MC_props.shrink_grow = .7
             cloth.ob.MC_props.gravity = 1.0
         
-        if cloth.iterator == 40:
-            cloth.velocity[:] = 0.0
+        #if cloth.iterator == 40:
+            #cloth.velocity[:] = 0.0
             
         if cloth.iterator == 50:
             surface_follow(cloth, colliders[0], 0.8)
@@ -3102,11 +3102,11 @@ def spring_basic_no_sw(cloth):
         extra_bend = True
         #extra_bend = False
         
-        #if cloth.ob.MC_props.p1_cloth:
+        if cloth.ob.MC_props.p1_cloth:
             #if cloth.ob.MC_props.bend > 0:
-                #for i in range(3):
+            for i in range(3):
 
-                    #abstract_bend(cloth)
+                abstract_bend(cloth)
                     #sew_force(cloth)
     #rt_(num='bend springs sw')
     

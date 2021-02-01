@@ -2655,7 +2655,7 @@ def wrap_force(cloth, avatar, frame=0):
     cloth.ob.shape_key_remove(cloth.ob.data.shape_keys.key_blocks['MCWF'])
     
 
-def surface_follow(cloth, avatar, frame):
+def surface_follow(cloth, avatar, value):
     """Used by p1 with surface deform for putting
     the arms down."""
     #bpy.context.scene.MC_props.interference = True
@@ -2664,83 +2664,112 @@ def surface_follow(cloth, avatar, frame):
     m.target = avatar
     m.falloff = 16.0
     bpy.ops.object.surfacedeform_bind({"object" : ob}, modifier='SF')
-    bpy.context.scene.frame_current = frame
+        
+    avk = avatar.data.shape_keys.key_blocks['Armature']
+    avk.value = value
 
     bpy.context.scene.MC_props.interference = True
     
 
 def spring_basic_no_sw(cloth):
-
+        
     if cloth.ob.MC_props.p1_cloth:
-        if cloth.iterator == 0:
+
+        colliders = [o for o in bpy.data.objects if (o.MC_props.collider) & (cloth.ob != o)]
+        
+        if cloth.iterator == 0:            
+            #bpy.context.scene.frame_current = 1
+            cloth.ob.MC_props.velocity = 0.98
             cloth.ob.MC_props.sew_force = 0.001
             cloth.ob.MC_props.shrink_grow = 1.0
-            cloth.ob.MC_props.gravity = -3.0
+            cloth.ob.MC_props.gravity = -1.0
             cloth.ob.MC_props.wrap_force = 0.0
-        
+
+            cloth.iterator = 1
+            return
+            
         # for updating after moving the arms in p1
         if bpy.context.scene.MC_props.interference:
             bpy.context.scene.MC_props.interference = False
 
             bpy.ops.object.modifier_apply_as_shapekey({"object" : cloth.ob}, modifier='SF')
-            #cloth.ob.data.update()
-            #cloth.ob.MC_props.continuous = False
             co = get_co_shape(cloth.ob, key='SF')
             cloth.ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set('co', co.ravel())
             cloth.ob.shape_key_remove(cloth.ob.data.shape_keys.key_blocks['SF'])
 
             refresh(cloth, skip=True)
             return
-            #interference(cloth, 0)
 
 
         if cloth.iterator == 10:
-            cloth.ob.MC_props.sew_force = .005
+            cloth.ob.MC_props.sew_force = .001
         if cloth.iterator == 20:
-            cloth.ob.MC_props.sew_force = .02
+            cloth.ob.MC_props.sew_force = .002
         if cloth.iterator == 30:
-            cloth.ob.MC_props.sew_force = .1
+            cloth.ob.MC_props.sew_force = .005
         if cloth.iterator == 40:
-            cloth.ob.MC_props.sew_force = .2
+            cloth.ob.MC_props.sew_force = .1
             cloth.ob.MC_props.shrink_grow = .7
-        if cloth.iterator == 60:
+            cloth.ob.MC_props.gravity = 1.0
+        
+        #if cloth.iterator == 43:
+            #cloth.velocity[:] = 0.0
+            
+        if cloth.iterator == 50:
+            surface_follow(cloth, colliders[0], 0.8)
             cloth.ob.MC_props.sew_force = .2        
-            cloth.ob.MC_props.shrink_grow = .8
             cloth.ob.MC_props.gravity = 0.0
-            cloth.ob.MC_props.wrap_force = 0.2
-
-        if cloth.iterator == 78:
-            cloth.ob.MC_props.wrap_force = 0.0
+            cloth.iterator += 1
+            return
+            
+        if cloth.iterator == 60:
+            surface_follow(cloth, colliders[0], 0.6)
+            cloth.velocity[:] = 0.0
+            
+            cloth.ob.MC_props.bend_iters = 4
+            cloth.ob.MC_props.gravity = -1.0
+            cloth.ob.MC_props.sew_force = .5
+            cloth.iterator += 1
+            return
+            
+        if cloth.iterator == 70:
+            surface_follow(cloth, colliders[0], 0.4)
+            cloth.iterator += 1
+            return
             
         if cloth.iterator == 80:
-        #if cloth.iterator == 3:
-            surface_follow(cloth, colliders[0], 70)
-            print("ran surface follow 80")
-            cloth.wrap_force = None
-            
-        #if cloth.iterator == 81:    
-            #cloth.ob.MC_props.wrap_force = 0.2
-            
-        if cloth.iterator == 100:
-            cloth.ob.MC_props.wrap_force = 0.0
-            surface_follow(cloth, colliders[0], 500)
-            print("ran surface follow 100")
-            #cloth.ob.MC_props.stretch_iters = 5
-            #cloth.ob.MC_props.shrink_grow = 1.0
-            cloth.ob.MC_props.gravity = -1.0
-            cloth.ob.MC_props.gravity = 0.98
-            
-        if cloth.iterator > 100:
-            if cloth.ob.MC_props.shrink_grow <= 0.98:
-                cloth.ob.MC_props.shrink_grow += 0.02
-            
-        if cloth.iterator == 190:
-            cloth.ob.MC_props.sew_force = 1
+            surface_follow(cloth, colliders[0], 0.2)
+            cloth.velocity[:] = 0.0
+            cloth.iterator += 1
+            return
+    
+        if cloth.iterator == 90:
+            surface_follow(cloth, colliders[0], 0.0)
+            cloth.ob.MC_props.velocity = 0.98
+            cloth.iterator += 1
+            return                        
+        
+        if cloth.iterator == 91:
+            cloth.velocity[:] = 0.0
+        
+        if cloth.iterator > 90:
+            if cloth.ob.MC_props.shrink_grow < 1:
+                cloth.ob.MC_props.shrink_grow += 0.05
+                
+        if cloth.iterator == 120:
+                cloth.ob.MC_props.bend_iters = 1
+                cloth.ob.MC_props.bend = 0.5
+                
+        if cloth.iterator == 170:
             cloth.ob.MC_props.self_collide_margin = 0.03
-        
-        if cloth.iterator == 195:
+            #print("ran surface follow 80")
+            #cloth.wrap_force = None
+            #cloth.ob.MC_props.gravity = -1.0
+        if cloth.iterator == 175:    
             cloth.ob.MC_props.continuous = False
-        
+            #cloth.ob.MC_props.wrap_force = 0.2
+            return
+            
         print("=========================")
         print(cloth.iterator, "iteration")
         print("=========================")
@@ -2903,9 +2932,9 @@ def spring_basic_no_sw(cloth):
         
         if cloth.ob.MC_props.p1_cloth:
             if cloth.ob.MC_props.bend > 0:
-                #for i in range(cloth.ob.MC_props.bend_iters):
-                    #pass
-                abstract_bend(cloth)
+                for i in range(3):
+
+                    abstract_bend(cloth)
                     #sew_force(cloth)
     #rt_(num='bend springs sw')
     
@@ -3162,8 +3191,14 @@ def cloth_physics(ob, cloth):#, colliders):
         # prop to go into user preferences. (make it so it won't run in edit mode)
         if not bpy.context.scene.MC_props.run_editmode:
             return
+        
+        #index = ob.data.shape_keys.key_blocks.find('MC_current')
+        #ob.active_shape_key_index = index
 
+        
+        #bpy.ops.transform.translate(value=(0.0, 0.0, 0.0))
         cloth.ob.update_from_editmode()
+        #cloth.ob.data.update_gpu_tag()
 
         #for area in bpy.context.window.screen.areas:
             #if area.type == 'VIEW_3D':
@@ -3227,6 +3262,11 @@ def cloth_physics(ob, cloth):#, colliders):
             cloth.selected[:] = False            
             if bpy.context.scene.MC_props.pause_selected:
                 cloth.ob.data.vertices.foreach_get('select', cloth.selected)
+
+
+            area = next(area for area in bpy.context.screen.areas if area.type == 'VIEW_3D')
+            space = next(space for space in area.spaces if space.type == 'VIEW_3D')
+            space.viewport_shade = 'RENDERED'  # set the viewport shading
 
 
         """ =============== FORCES EDIT MODE ================ """
@@ -4550,6 +4590,7 @@ class MCResetToBasisShape(bpy.types.Operator):
         current_key.data.foreach_set('co', cloth.co.ravel())
         ob.data.update()
         Collider(cloth)
+        refresh(cloth, skip=True)
         return {'FINISHED'}
 
 

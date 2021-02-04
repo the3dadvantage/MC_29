@@ -1964,16 +1964,19 @@ def manage_vertex_groups(cloth):
               ('MC_drag',           0.0),
               ('MC_surface_follow', 0.0),
               ('MC_bend_stiff',      vw),
-              ('MC_stretch',         vw)]
+              ('MC_stretch',         vw),
+              ('MC_collide_offset',  vw),
+              ]
 
     for i in groups:
         np_groups.append(get_weights(ob, i[0], obm, i[1]))
 
-    cloth.pin            = np_groups[0][:, None]
-    cloth.drag           = np_groups[1][:, None]
+    cloth.pin = np_groups[0][:, None]
+    cloth.drag = np_groups[1][:, None]
     cloth.surface_follow = np_groups[2]
-    cloth.bend_group     = np_groups[3][:, None]
-    cloth.stretch_group  = np_groups[4][:, None]
+    cloth.bend_group = np_groups[3][:, None]
+    cloth.stretch_group = np_groups[4][:, None]
+    cloth.group_surface_offset = np_groups[5]
 
     cloth.bend_cull = cloth.bend_group > 0
 
@@ -2851,7 +2854,7 @@ def spring_basic_no_sw(cloth):
         
         if cloth.iterator == 0:            
             #bpy.context.scene.frame_current = 1
-            cloth.ob.MC_props.velocity = 0.98
+            cloth.ob.MC_props.velocity = 0.95
             cloth.ob.MC_props.sew_force = 0.001
             cloth.ob.MC_props.shrink_grow = 1.0
             cloth.ob.MC_props.gravity = -1.0
@@ -2873,13 +2876,13 @@ def spring_basic_no_sw(cloth):
             return
 
 
-        if cloth.iterator == 10:
-            cloth.ob.MC_props.sew_force = .001
         if cloth.iterator == 20:
-            cloth.ob.MC_props.sew_force = .002
-        if cloth.iterator == 30:
-            cloth.ob.MC_props.sew_force = .005
+            cloth.ob.MC_props.sew_force = .001
         if cloth.iterator == 40:
+            cloth.ob.MC_props.sew_force = .002
+        if cloth.iterator == 60:
+            cloth.ob.MC_props.sew_force = .005
+        if cloth.iterator == 80:
             cloth.ob.MC_props.sew_force = .1
             cloth.ob.MC_props.shrink_grow = .7
             cloth.ob.MC_props.gravity = 1.0
@@ -2887,14 +2890,14 @@ def spring_basic_no_sw(cloth):
         #if cloth.iterator == 40:
             #cloth.velocity[:] = 0.0
             
-        if cloth.iterator == 50:
+        if cloth.iterator == 100:
             surface_follow(cloth, colliders[0], 0.8)
             cloth.ob.MC_props.sew_force = .2        
             cloth.ob.MC_props.gravity = 0.0
             cloth.iterator += 1
             return
             
-        if cloth.iterator == 60:
+        if cloth.iterator == 160:
             surface_follow(cloth, colliders[0], 0.6)
             cloth.velocity[:] = 0.0
             
@@ -2904,40 +2907,40 @@ def spring_basic_no_sw(cloth):
             cloth.iterator += 1
             return
             
-        if cloth.iterator == 70:
+        if cloth.iterator == 170:
             surface_follow(cloth, colliders[0], 0.4)
             cloth.iterator += 1
             return
             
-        if cloth.iterator == 80:
+        if cloth.iterator == 180:
             surface_follow(cloth, colliders[0], 0.2)
             cloth.velocity[:] = 0.0
             cloth.iterator += 1
             return
     
-        if cloth.iterator == 90:
+        if cloth.iterator == 190:
             surface_follow(cloth, colliders[0], 0.0)
             cloth.ob.MC_props.velocity = 0.98
             cloth.iterator += 1
             return                        
         
-        if cloth.iterator == 91:
+        if cloth.iterator == 191:
             cloth.velocity[:] = 0.0
         
-        if cloth.iterator > 90:
+        if cloth.iterator > 190:
             if cloth.ob.MC_props.shrink_grow < 1:
-                cloth.ob.MC_props.shrink_grow += 0.05
+                cloth.ob.MC_props.shrink_grow += 0.01
                 
-        if cloth.iterator == 120:
+        if cloth.iterator == 220:
                 cloth.ob.MC_props.bend_iters = 1
                 cloth.ob.MC_props.bend = 0.5
                 
-        if cloth.iterator == 170:
+        if cloth.iterator == 300:
             cloth.ob.MC_props.self_collide_margin = 0.03
             #print("ran surface follow 80")
             #cloth.wrap_force = None
             #cloth.ob.MC_props.gravity = -1.0
-        if cloth.iterator == 175:    
+        if cloth.iterator == 305:    
             cloth.ob.MC_props.continuous = False
             #cloth.ob.MC_props.wrap_force = 0.2
             return
@@ -2991,7 +2994,7 @@ def spring_basic_no_sw(cloth):
     #v_move = cloth.co - cloth.vel_zero
     rt_(num='stretch time')
         
-
+    T = time.time()
     if cloth.ob.MC_props.detect_collisions:
         colliders = [o for o in bpy.data.objects if (o.MC_props.collider) & (cloth.ob != o)]
         if len(colliders) > 0:
@@ -3090,6 +3093,7 @@ def spring_basic_no_sw(cloth):
             # --------------------------------
             rt_(num='object collisions sw')        
     # self collistion ---------------------------
+    print(time.time() - T, "sc")
     rt_(None, False)
     if cloth.ob.MC_props.self_collide:
         #if cloth.ob.data.is_editmode:
@@ -3464,12 +3468,29 @@ def cloth_physics(ob, cloth):#, colliders):
             else:
                 cache(cloth)
 
+        #update_shading = True
+        #update_shading = False
+        if bpy.context.scene.MC_props.update_shading: # for live shading update        
+            obm = cloth.obm
+            obm.faces.ensure_lookup_table()
+            obm.edges.ensure_lookup_table()
+            vsel = obm.verts[0].select
+            fsel = obm.faces[0].select
+            esel = obm.edges[0].select
+            obm.verts[0].select = True
+            bpy.ops.mesh.hide()
+            bpy.ops.mesh.reveal()
+            obm.verts[0].select = vsel
+            obm.faces[0].select = fsel
+            obm.edges[0].select = esel
+
         return
 
     # switched out of edit mode
     if cloth.mode is None:
         cloth.mode = 1
-        
+
+        #print("running here")
         #refresh(cloth, skip=True)
         #index = ob.data.shape_keys.key_blocks.find('MC_current')
         #ob.active_shape_key_index = index
@@ -4731,6 +4752,10 @@ class McPropsScene(bpy.types.PropertyGroup):
     bpy.props.BoolProperty(name="View Virtual Springs", description="create a mesh to show virtual springs", default=False)
     # make this one a child object that is not selectable.
 
+    update_shading:\
+    bpy.props.BoolProperty(name="Update Shading in Edit Mode", description="Bad for performance but keeps eevee shading updated", default=False)
+    # make this one a child object that is not selectable.
+
 
 # ^                                                          ^ #
 # ^                     END properties                       ^ #
@@ -4882,7 +4907,10 @@ def update_v_norms(cloth):
     # now get vertex normals with add.at
     cloth.v_norms[:] = 0.0
     np.add.at(cloth.v_norms, cloth.v_norm_indexer, normals[cloth.v_norm_indexer1])
-
+    dots = np.sqrt(np.einsum('ij,ij->i', cloth.v_norms, cloth.v_norms))[:, None]
+    cloth.v_norms /= dots
+    #print(cloth.v_norms[1] @ cloth.v_norms[0])
+    #print(np.unique(cloth.v_norm_indexer))
 
 def refresh(cloth, skip=False):
     
@@ -4992,6 +5020,10 @@ def refresh(cloth, skip=False):
     #cloth.surface_offset_tris = np.empty((cloth.tridex.shape[0], 2, 3, 3), dtype=np.float32)
     #cloth.choose_tris = np.empty((cloth.tridex.shape[0], 3, 3), dtype=np.float32)
     cloth.sc_co = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
+
+    for i, j in enumerate(cloth.obm.verts):
+        if j.is_boundary:
+            cloth.group_surface_offset[i] = -0.1
 
     Collider(cloth)
     
@@ -5692,6 +5724,7 @@ class PANEL_PT_modelingClothPreferences(bpy.types.Panel):
         col.scale_y = 1
         col.label(text='Preferences')
         col.prop(sc.MC_props, "run_editmode", text="Editmode Run")
+        col.prop(sc.MC_props, "update_shading", text="Update Shading")
         col.prop(sc.MC_props, "pause_selected", text="Pause Selected")
         col.prop(sc.MC_props, "view_virtual", text="View Virtual Springs")
 

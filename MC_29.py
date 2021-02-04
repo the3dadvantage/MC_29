@@ -2901,7 +2901,7 @@ def spring_basic_no_sw(cloth):
             surface_follow(cloth, colliders[0], 0.6)
             cloth.velocity[:] = 0.0
             
-            cloth.ob.MC_props.bend_iters = 4
+            cloth.ob.MC_props.bend_iters = 1
             cloth.ob.MC_props.gravity = -1.0
             cloth.ob.MC_props.sew_force = .5
             cloth.iterator += 1
@@ -2920,7 +2920,7 @@ def spring_basic_no_sw(cloth):
     
         if cloth.iterator == 190:
             surface_follow(cloth, colliders[0], 0.0)
-            cloth.ob.MC_props.velocity = 0.98
+            cloth.ob.MC_props.velocity = 0.99
             cloth.iterator += 1
             return                        
         
@@ -4909,8 +4909,10 @@ def update_v_norms(cloth):
     np.add.at(cloth.v_norms, cloth.v_norm_indexer, normals[cloth.v_norm_indexer1])
     dots = np.sqrt(np.einsum('ij,ij->i', cloth.v_norms, cloth.v_norms))[:, None]
     cloth.v_norms /= dots
+    #cloth.v_norms *= 3
     #print(cloth.v_norms[1] @ cloth.v_norms[0])
     #print(np.unique(cloth.v_norm_indexer))
+
 
 def refresh(cloth, skip=False):
     

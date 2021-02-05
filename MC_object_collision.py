@@ -27,18 +27,7 @@ def revert_rotation(ob, co):
     to rotate"""
     m = np.array(ob.matrix_world)
     mat = m[:3, :3] / np.array(ob.scale, dtype=np.float32) # rotates backwards without T
-    #print(mat)
     return (co @ mat) / np.array(ob.scale, dtype=np.float32)
-
-
-# universal ---------------------
-def absolute_co(ob, co=None):
-    """Get vert coords in world space with modifiers"""
-    co, proxy = get_proxy_co(ob, co, return_proxy=True)
-    m = np.array(ob.matrix_world, dtype=np.float32)
-    mat = m[:3, :3].T # rotates backwards without T
-    loc = m[:3, 3]
-    return co @ mat + loc, proxy
 
 
 def apply_transforms(ob, co):
@@ -47,102 +36,6 @@ def apply_transforms(ob, co):
     mat = m[:3, :3].T # rotates backwards without T
     loc = m[:3, 3]
     return co @ mat + loc
-
-
-def select_edit_mode(sc, ob, idx, type='v', deselect=False, obm=None):
-    """Selects verts in edit mode and updates"""
-    
-    if ob.data.is_editmode:
-        if obm is None:
-            obm = bmesh.from_edit_mesh(ob.data)
-            obm.verts.ensure_lookup_table()
-        
-        if type == 'v':
-            x = obm.verts
-        if type == 'f':
-            x = obm.faces
-        if type == 'e':
-            x = obm.edges
-        
-        if deselect:
-            for i in x:
-                i.select = False
-        
-        for i in idx:
-            sc.select_counter[i] += 1
-            x[i].select = True
-        
-        if obm is None:
-            bmesh.update_edit_mesh(ob.data)
-        #bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
-
-
-def bmesh_proxy(ob):
-    """Get a bmesh contating modifier effects"""
-    dg = bpy.context.evaluated_depsgraph_get()
-    prox = ob.evaluated_get(dg)
-    proxy = prox.to_mesh()
-    obm = bmesh.new()
-    obm.from_mesh(proxy)
-    return obm
-    
-
-def get_proxy_co(ob, co=None, proxy=None, return_proxy=False, return_normals=False):
-    """Gets co with modifiers like cloth"""
-    if proxy is None:
-        dg = bpy.context.evaluated_depsgraph_get()
-        prox = ob.evaluated_get(dg)
-        proxy = prox.to_mesh()
-
-    if co is None:
-        vc = len(proxy.vertices)
-        co = np.empty((vc, 3), dtype=np.float32)
-
-    proxy.vertices.foreach_get('co', co.ravel())
-    if return_proxy:
-        return co, proxy
-    
-    proxy.to_mesh_clear()
-    #ob.to_mesh_clear()
-    return co
-
-
-def get_edges(ob, fake=False):
-    """Edge indexing for self collision"""
-    if fake:
-        c = len(ob.data.vertices)
-        ed = np.empty((c, 2), dtype=np.int32)
-        idx = np.arange(c * 2, dtype=np.int32)
-        ed[:, 0] = idx[:c]
-        ed[:, 1] = idx[c:]
-        return ed
-    
-    ed = np.empty((len(ob.data.edges), 2), dtype=np.int32)
-    ob.data.edges.foreach_get('vertices', ed.ravel())
-    return ed
-
-
-def get_faces(ob):
-    """Only works on triangle mesh."""
-    fa = np.empty((len(ob.data.polygons), 3), dtype=np.int32)
-    ob.data.polygons.foreach_get('vertices', fa.ravel())
-    return fa
-
-
-def get_tridex(ob, tobm=None):
-    """Return an index for viewing the verts as triangles"""
-    free = True
-    if ob.data.is_editmode:
-        ob.update_from_editmode()
-    if tobm is None:
-        tobm = bmesh.new()
-        tobm.from_mesh(ob.data)
-        free = True
-    bmesh.ops.triangulate(tobm, faces=tobm.faces[:])
-    tridex = np.array([[v.index for v in f.verts] for f in tobm.faces], dtype=np.int32)
-    if free:
-        tobm.free()
-    return tridex
 
 
 def inside_triangles(tris, points, margin=0.0):#, cross_vecs):
@@ -439,9 +332,6 @@ def total_bounds(sc, cloth):
 def object_collisions_7(sc, margin=0.0, cloth=None):
     
     margin = 0.0
-    #margin = 0.0
-    
-    #print(cloth.traveling_edge_co[0])
     
     tx = cloth.oc_tris_six[:, :, 0]
     ty = cloth.oc_tris_six[:, :, 1]
@@ -479,16 +369,16 @@ def object_collisions_7(sc, margin=0.0, cloth=None):
     ty = tris6[:, :, 1]
     tz = tris6[:, :, 2]
 
-    margin = 0.00001
+    #margin = 0.00001
 
-    txmax = np.max(tx, axis=1) + margin
-    txmin = np.min(tx, axis=1) - margin
+    txmax = np.max(tx, axis=1)# + margin
+    txmin = np.min(tx, axis=1)# - margin
 
-    tymax = np.max(ty, axis=1) + margin
-    tymin = np.min(ty, axis=1) - margin
+    tymax = np.max(ty, axis=1)# + margin
+    tymin = np.min(ty, axis=1)# - margin
 
-    tzmax = np.max(tz, axis=1) + margin
-    tzmin = np.min(tz, axis=1) - margin
+    tzmax = np.max(tz, axis=1)# + margin
+    tzmin = np.min(tz, axis=1)# - margin
 
     sc.txmax = txmax
     sc.txmin = txmin
@@ -506,13 +396,13 @@ def object_collisions_7(sc, margin=0.0, cloth=None):
 
     #margin = 0.1
 
-    sc.exmin = np.min(ex, axis=1) - margin
-    sc.eymin = np.min(ey, axis=1) - margin
-    sc.ezmin = np.min(ez, axis=1) - margin
+    sc.exmin = np.min(ex, axis=1)# - margin
+    sc.eymin = np.min(ey, axis=1)# - margin
+    sc.ezmin = np.min(ez, axis=1)# - margin
     
-    sc.exmax = np.max(ex, axis=1) + margin
-    sc.eymax = np.max(ey, axis=1) + margin
-    sc.ezmax = np.max(ez, axis=1) + margin
+    sc.exmax = np.max(ex, axis=1)# + margin
+    sc.eymax = np.max(ey, axis=1)# + margin
+    sc.ezmax = np.max(ez, axis=1)# + margin
         
     tfull, efull, bounds = octree_et(sc, margin=0.0, cloth=cloth)
 
@@ -638,10 +528,13 @@ def ray_check(sc, ed, trs, cloth):
     check, weights = inside_triangles(t[:, :3][switch], co[switch])
     
     start_check, start_weights = inside_triangles(t[:, :3][switch], start_co[switch], margin= 0.0)
-
+    
+    check = check & start_check
     #pcols = edidx[switch][check]
     #cloth.static = True
-
+    if cloth.ob.MC_props.p1_cloth:
+        dots *= cloth.group_surface_offset[edidx]
+    
     if cloth.static:    
         travel = un[switch][check] * -dots[switch][check][:, None]
         weight_plot = t[:, 3:][switch][check] * start_weights[check][:, :, None]
@@ -654,7 +547,7 @@ def ray_check(sc, ed, trs, cloth):
         weight_plot = t[:, 3:][switch] * start_weights[:, :, None]
         loc = np.sum(weight_plot, axis=1)
         pcols = edidx[switch]
-
+        
     cco = sc.fco[pcols]
     pl_move = loc - cco
 
@@ -667,30 +560,21 @@ def ray_check(sc, ed, trs, cloth):
         else:    
             tcols = trs[switch]
     
-        fr = cloth.total_friction[cloth.boxboo][tcols] # put in a static friction method !!! when the force is greater than a length it pulls otherwise it sticks.
+        fr = cloth.total_friction[cloth.boxboo][tcols] # when the force is greater than a length it pulls otherwise it sticks.
 
         move = (travel * (1 - fr)) + (pl_move * fr)
         
+        # move dist from no_sw for static friction
         st = (cloth.move_dist[pcols] < cloth.total_static[cloth.boxboo][tcols])
         move[st] = pl_move[st]
 
         rev = revert_rotation(cloth.ob, move)
-
-        if False:
-            lens = np.sqrt(np.einsum('ij,ij->i', rev, rev))
-            uni, inv, counts = np.unique(pcols, return_inverse=True, return_counts=True)
-            stretch_array = np.zeros(uni.shape[0], dtype = np.float32)
-            np.add.at(stretch_array, inv, lens)
-            weights = lens / stretch_array[inv]
-            rev *= (weights[:, None])# * .777)    
-
-            ntn = np.nan_to_num(rev)
-            np.add.at(cloth.co, pcols, ntn)
             
-        cloth.co[pcols] += rev    
+        cloth.co[pcols] += rev
 
         return
-
+    
+    
     fr = cloth.object_friction # put in a static friction method !!! when the force is greater than a length it pulls otherwise it sticks.
     move = (travel * (1 - fr)) + (pl_move * fr)
             

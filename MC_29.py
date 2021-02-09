@@ -2024,7 +2024,9 @@ class Collider():
         colliders = [o for o in bpy.data.objects if (o.MC_props.collider) & (o != cloth.ob)]
         if len(colliders) == 0:
             return
-
+        geo_check = []
+        cloth.collider_count = len(colliders)
+        
         cloth.total_co = np.empty((0, 3), dtype=np.float32)
         oc_total_tridex = np.empty((0,3), dtype=np.int32)
         cloth.oc_tri_counts = []
@@ -2050,7 +2052,7 @@ class Collider():
             cloth.ob_v_norm_indexer += [[v.index + shift] * len(v.link_faces) for v in triobm.verts]
             #print(shift, 'shift')
             #print(f_shift, 'f_shift')
-            
+            geo_check.append(abco.shape[0])
             if False:
                 if ob_settings:
                     surface_offset = normals * c.MC_props.outer_margin
@@ -2067,6 +2069,8 @@ class Collider():
             #print(abco)
             #print("========================")
         
+        
+        cloth.geo_check = np.array(geo_check)
         cloth.oc_tri_counts = np.cumsum(cloth.oc_tri_counts)
         cloth.oc_v_counts = np.cumsum(cloth.oc_v_counts)
         
@@ -2075,7 +2079,9 @@ class Collider():
         cloth.ob_v_norms = np.zeros_like(cloth.total_co)
 
         cloth.ob_v_norm_indexer1 = np.hstack(cloth.ob_v_norm_indexer1)
+        cloth.ob_v_norm_indexer1 = np.array(cloth.ob_v_norm_indexer1, dtype=np.int32)
         cloth.ob_v_norm_indexer = np.hstack(cloth.ob_v_norm_indexer)
+        cloth.ob_v_norm_indexer = np.array(cloth.ob_v_norm_indexer, dtype=np.int32)
 
         cloth.oc_total_tridex = oc_total_tridex
         update_ob_v_norms(cloth)
@@ -2939,6 +2945,16 @@ def ob_collide(cloth):
     colliders = [o for o in bpy.data.objects if (o.MC_props.collider) & (cloth.ob != o)]
     if len(colliders) == 0:
         return
+    c_check = True
+    if len(colliders) != cloth.collider_count:
+        Collider(cloth)
+        c_check = False
+    
+    #if c_check:    
+        #geo_check = np.array([len(o.data.vertices) for o in colliders])
+        #if not np.all(geo_check == cloth.geo_check):
+            #Collider(cloth)
+            #print('redid colliders')
 
     if cloth.ob.MC_props.wrap_force != 0:
         wrap_force(cloth, colliders[0])
@@ -2947,6 +2963,12 @@ def ob_collide(cloth):
     f_shift = 0
     for i, c in enumerate(colliders):
         abco, proxy, prox = absolute_co(c)
+        
+        if abco.shape[0] != cloth.geo_check[i]:
+            Collider(cloth)
+            print('recalc colliders')
+            return
+        
         sh = abco.shape[0]
 
         cloth.total_co[shift: shift + sh] = abco# + surface_offset
@@ -3165,106 +3187,6 @@ def spring_basic_no_sw(cloth):
     if cloth.ob.MC_props.detect_collisions:
         ob_collide(cloth)
     
-    if False:    
-        if cloth.ob.MC_props.detect_collisions:
-            colliders = [o for o in bpy.data.objects if (o.MC_props.collider) & (cloth.ob != o)]
-            if len(colliders) > 0:
-
-                if cloth.ob.MC_props.wrap_force != 0:
-                    wrap_force(cloth, colliders[0])
-
-                ob_settings = not cloth.ob.MC_props.override_settings
-                cloth.OM = cloth.ob.MC_props.outer_margin
-                cloth.static_threshold = cloth.ob.MC_props.static_friction * .0001            
-                cloth.object_friction = cloth.ob.MC_props.oc_friction
-
-                oms = [c.MC_props.outer_margin for c in colliders]
-                ims = [c.MC_props.inner_margin for c in colliders]
-                frs = [c.MC_props.oc_friction for c in colliders]
-                sfrs = [c.MC_props.static_friction  * .0001 for c in colliders]
-                #cloth.OM = max(oms)
-
-                shift = 0
-                f_shift = 0
-                #cloth.total_co = np.empty((0, 3), dtype=np.float32)
-                recalc = False
-                inner_m = False
-                for i, c in enumerate(colliders):
-                    abco, proxy, prox = absolute_co(c)
-                    normals = get_proxy_normals(ob=c, proxy=proxy)
-                    normals = apply_rotation(c, normals) # could put the collider proxy on an object and copy the world matrix over maybe? Not sure...
-                    #prox.to_mesh_clear()
-                    
-                    sh = abco.shape[0]
-                    
-                    if ob_settings:
-                        surface_offset = normals * oms[i]
-                        im = c.MC_props.inner_margin
-                    else:    
-                        surface_offset = normals * cloth.ob.MC_props.outer_margin
-                        im = cloth.ob.MC_props.inner_margin
-                        
-                    if (shift + sh) > cloth.total_co.shape[0]:
-                        recalc = True
-                        continue
-                    
-                    if ims[i] > 0:
-                        cloth.inner_norms[shift: shift + sh] = normals * -im
-                        inner_m = True
-                        
-                    cloth.total_co[shift: shift + sh] = abco + surface_offset
-                    #cloth.total_co = np.append(cloth.total_co, abco + surface_offset, axis=0)
-                    shift += sh
-                    
-                #if cloth.collider_sh != cloth.total_co.shape[0]:
-                if recalc:
-                    Collider(cloth)
-
-                if ob_settings:    
-                    #fcs = [len(p[1].polygons) for p in abc_prox]
-                    fcs = cloth.oc_tri_counts  #[len(p[1].polygons) for p in abc_prox]
-                    
-                    f_shift = 0
-                    for i in range(len(colliders)):
-                        cloth.total_margins[f_shift: f_shift+fcs[i]] = oms[i]
-                        cloth.total_friction[f_shift: f_shift+fcs[i]] = frs[i]
-                        cloth.total_static[f_shift: f_shift+fcs[i]] = sfrs[i]
-                        f_shift = fcs[i]
-
-            # checing if the colliders move...
-                static_check = True
-                #static_check = False
-                if static_check:
-                    #ccdif = np.abs(cloth.last_co - cloth.total_co)
-                    ccdif = cloth.last_co - cloth.total_co
-                    cloth.static = False
-                    
-                    if np.all(np.abs(ccdif) < 1):
-                        cloth.static = True
-                    
-                    #print(cloth.static)
-                #if new_sc:
-                    #MC_new_self.detect_collisions(cloth)
-                    #MC_object_collision.detect_collisions(cloth)
-                #else:
-                
-                # hoping to improve stability by updating after collide. Can move to before to test
-                if cloth.ob.MC_props.new_sc:
-                    sc_mesh(cloth)
-                
-                # update collision objects coords:
-                
-                MC_object_collision.detect_collisions(cloth)
-                #print(cloth.last_co.shape)
-
-                cloth.last_co[:] = cloth.total_co# - cloth.inner_norms
-                #if not cloth.ob.MC_props.p1_cloth:# inner_m:
-                    #pass
-                    #cloth.last_co -= cloth.inner_norms
-                # --------------------------------
-                rt_(num='object collisions sw')        
-        # self collistion ---------------------------
-
     rt_(None, False)
     if cloth.ob.MC_props.self_collide:
         #if cloth.ob.data.is_editmode:

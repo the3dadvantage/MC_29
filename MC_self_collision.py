@@ -13,106 +13,7 @@ def rt_(num=None):
     big_t = t
 
 
-def timer(t, name='name'):
-    ti = bpy.context.scene.timers
-    if name not in ti:
-        ti[name] = 0.0
-    ti[name] += t
-
-
-def select_edit_mode(sc, ob, idx, type='v', deselect=False, obm=None):
-    """Selects verts in edit mode and updates"""
-    
-    if ob.data.is_editmode:
-        if obm is None:
-            obm = bmesh.from_edit_mesh(ob.data)
-            obm.verts.ensure_lookup_table()
-        
-        if type == 'v':
-            x = obm.verts
-        if type == 'f':
-            x = obm.faces
-        if type == 'e':
-            x = obm.edges
-        
-        if deselect:
-            for i in x:
-                i.select = False
-        
-        for i in idx:
-            sc.select_counter[i] += 1
-            x[i].select = True
-        
-        if obm is None:
-            bmesh.update_edit_mesh(ob.data)
-        #bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
-
-
-def bmesh_proxy(ob):
-    """Get a bmesh contating modifier effects"""
-    dg = bpy.context.evaluated_depsgraph_get()
-    prox = ob.evaluated_get(dg)
-    proxy = prox.to_mesh()
-    obm = bmesh.new()
-    obm.from_mesh(proxy)
-    return obm
-    
-
-def get_proxy_co(ob, co=None, proxy=None):
-    """Gets co with modifiers like cloth"""
-    if proxy is None:
-        dg = bpy.context.evaluated_depsgraph_get()
-        prox = ob.evaluated_get(dg)
-        proxy = prox.to_mesh()
-
-    if co is None:
-        vc = len(proxy.vertices)
-        co = np.empty((vc, 3), dtype=np.float32)
-
-    proxy.vertices.foreach_get('co', co.ravel())
-    ob.to_mesh_clear()
-    return co
-
-
-def get_edges(ob, fake=False):
-    """Edge indexing for self collision"""
-    if fake:
-        c = len(ob.data.vertices)
-        ed = np.empty((c, 2), dtype=np.int32)
-        idx = np.arange(c * 2, dtype=np.int32)
-        ed[:, 0] = idx[:c]
-        ed[:, 1] = idx[c:]
-        return ed
-    
-    ed = np.empty((len(ob.data.edges), 2), dtype=np.int32)
-    ob.data.edges.foreach_get('vertices', ed.ravel())
-    return ed
-
-
-def get_faces(ob):
-    """Only works on triangle mesh."""
-    fa = np.empty((len(ob.data.polygons), 3), dtype=np.int32)
-    ob.data.polygons.foreach_get('vertices', fa.ravel())
-    return fa
-
-
-def get_tridex(ob, tobm=None):
-    """Return an index for viewing the verts as triangles"""
-    free = True
-    if ob.data.is_editmode:
-        ob.update_from_editmode()
-    if tobm is None:
-        tobm = bmesh.new()
-        tobm.from_mesh(ob.data)
-        free = True
-    bmesh.ops.triangulate(tobm, faces=tobm.faces[:])
-    tridex = np.array([[v.index for v in f.verts] for f in tobm.faces], dtype=np.int32)
-    if free:
-        tobm.free()
-    return tridex
-
-
-def inside_triangles(tris, points, margin=0.0):#, cross_vecs):
+def inside_triangles(tris, points, margin=0.0):#, cross_vecs): # could plug these in to save time...
     """Checks if points are inside triangles"""
     origins = tris[:, 0]
     cross_vecs = tris[:, 1:] - origins[:, None]
@@ -136,7 +37,7 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs):
 
     w = 1 - (u+v)
     # !!!! needs some thought
-    margin = -0.05
+    margin = 0.0
     # !!!! ==================
     weights = np.array([w, u, v]).T
     check = (u >= margin) & (v >= margin) & (w >= margin)
@@ -226,30 +127,20 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     """Adaptive octree. Good for finding doubles or broad
     phase collision culling. et does edges and tris.
     Also groups edges in boxes.""" # first box is based on bounds so first box could be any shape rectangle
-
-    #T = time.time()
-    margin = sc.M # might be faster than >=, <=
-    margin = 0.0 # might be faster than >=, <=
-    #margin = .001 # might be faster than >=, <=
     
     co = cloth.sc_co
-
+    
     if bounds is None:
         b_min = np.min(co, axis=0)
         b_max = np.max(co, axis=0)
     else:
         b_min, b_max = bounds[0], bounds[1]
-
-        #eco = co[sc.ed[eidx].ravel()]
-        #b_min = np.min(eco, axis=0)
-        #b_max = np.max(eco, axis=0)
         
     # bounds_8 is for use on the next iteration.
     mid, bounds_8 = generate_bounds(b_min, b_max, margin)
     
-    #mid = b_min + ((b_max - b_min) / 2)
-    mid_ = mid# + margin
-    _mid = mid# - margin
+    mid_ = mid
+    _mid = mid
 
     x_, y_, z_ = mid_[0], mid_[1], mid_[2]
     _x, _y, _z = _mid[0], _mid[1], _mid[2]
@@ -283,85 +174,85 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     eidx = np.array(eidx, dtype=np.int32)
 
     # -------------------------------
-    B = xmin[idx] < x_# + margin
+    B = xmin[idx] <= x_
     il = idx[B]
 
-    B = xmax[idx] > _x# - margin
+    B = xmax[idx] >= _x
     ir = idx[B]
     
     # edges
-    eB = exmin[eidx] < x_# + margin
+    eB = exmin[eidx] <= x_
     eil = eidx[eB]
 
-    eB = exmax[eidx] > _x# - margin
+    eB = exmax[eidx] >= _x
     eir = eidx[eB]
 
     # ------------------------------
-    B = ymax[il] > _y# - margin
+    B = ymax[il] >= _y
     ilf = il[B]
 
-    B = ymin[il] < y_# + margin
+    B = ymin[il] <= y_
     ilb = il[B]
 
-    B = ymax[ir] > _y# - margin
+    B = ymax[ir] >= _y
     irf = ir[B]
 
-    B = ymin[ir] < y_# + margin
+    B = ymin[ir] <= y_
     irb = ir[B]
     
     # edges
-    eB = eymax[eil] > _y# - margin
+    eB = eymax[eil] >= _y
     eilf = eil[eB]
 
-    eB = eymin[eil] < y_# + margin
+    eB = eymin[eil] <= y_
     eilb = eil[eB]
 
-    eB = eymax[eir] > _y# - margin
+    eB = eymax[eir] >= _y
     eirf = eir[eB]
 
-    eB = eymin[eir] < y_# + margin
+    eB = eymin[eir] <= y_
     eirb = eir[eB]
 
     # ------------------------------
-    B = zmax[ilf] > _z# - margin
+    B = zmax[ilf] >= _z
     ilfu = ilf[B]
-    B = zmin[ilf] < z_# + margin
+    B = zmin[ilf] <= z_
     ilfd = ilf[B]
 
-    B = zmax[ilb] > _z# - margin
+    B = zmax[ilb] >= _z
     ilbu = ilb[B]
-    B = zmin[ilb] < z_# + margin
+    B = zmin[ilb] <= z_
     ilbd = ilb[B]
 
-    B = zmax[irf] > _z# - margin
+    B = zmax[irf] >= _z
     irfu = irf[B]
-    B = zmin[irf] < z_# + margin
+    B = zmin[irf] <= z_
     irfd = irf[B]
 
-    B = zmax[irb] > _z# - margin
+    B = zmax[irb] >= _z
     irbu = irb[B]
-    B = zmin[irb] < z_# + margin
+    B = zmin[irb] <= z_
     irbd = irb[B]
 
     # edges
-    eB = ezmax[eilf] > _z# - margin
+    eB = ezmax[eilf] >= _z
     eilfu = eilf[eB]
-    eB = ezmin[eilf] < z_# + margin
+    eB = ezmin[eilf] <= z_
     eilfd = eilf[eB]
 
-    eB = ezmax[eilb] > _z# - margin
+    eB = ezmax[eilb] >= _z
     eilbu = eilb[eB]
-    eB = ezmin[eilb] < z_# + margin
+    eB = ezmin[eilb] <= z_
     eilbd = eilb[eB]
 
-    eB = ezmax[eirf] > _z# - margin
+    eB = ezmax[eirf] >= _z
     eirfu = eirf[eB]
-    eB = ezmin[eirf] < z_# + margin
+    eB = ezmin[eirf] <= z_
     eirfd = eirf[eB]
 
-    eB = ezmax[eirb] > _z# - margin
+    eB = ezmax[eirb] >= _z
     eirbu = eirb[eB]
-    eB = ezmin[eirb] < z_# + margin
+    eB = ezmin[eirb] <= z_
     eirbd = eirb[eB]    
 
     boxes = [ilbd, irbd, ilfd, irfd, ilbu, irbu, ilfu, irfu]
@@ -378,25 +269,21 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     
 
 def self_collisions_7(sc, margin=0.1, cloth=None):
-    
-    T = time.time()
-
-
-    margin = 0.0
-    #margin = cloth.ob.MC_props.self_collide_margin
 
     tx = sc.tris[:, :, 0]
     ty = sc.tris[:, :, 1]
     tz = sc.tris[:, :, 2]
+
+    margin = 0.0
     
-    txmax = np.max(tx, axis=1) + margin
-    txmin = np.min(tx, axis=1) - margin
+    txmax = np.max(tx, axis=1)# + margin
+    txmin = np.min(tx, axis=1)# - margin
 
-    tymax = np.max(ty, axis=1) + margin
-    tymin = np.min(ty, axis=1) - margin
+    tymax = np.max(ty, axis=1)# + margin
+    tymin = np.min(ty, axis=1)# - margin
 
-    tzmax = np.max(tz, axis=1) + margin
-    tzmin = np.min(tz, axis=1) - margin
+    tzmax = np.max(tz, axis=1)# + margin
+    tzmin = np.min(tz, axis=1)# - margin
 
     sc.txmax = txmax
     sc.txmin = txmin
@@ -412,25 +299,17 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
     ey = sc.edges[:, :, 1]
     ez = sc.edges[:, :, 2]
 
-    margin = 0.0
-    #margin = cloth.ob.MC_props.self_collide_margin
 
-    sc.exmin = np.min(ex, axis=1) - margin
-    sc.eymin = np.min(ey, axis=1) - margin
-    sc.ezmin = np.min(ez, axis=1) - margin
+    sc.exmin = np.min(ex, axis=1)
+    sc.eymin = np.min(ey, axis=1)
+    sc.ezmin = np.min(ez, axis=1)
     
-    sc.exmax = np.max(ex, axis=1) + margin
-    sc.eymax = np.max(ey, axis=1) + margin
-    sc.ezmax = np.max(ez, axis=1) + margin
-        
-    #margin = 0.0
-    #timer(time.time()-T, "self col 5")
-    # !!! can do something like check the octree to make sure the boxes are smaller
-    #       to know if we hit a weird case where we're no longer getting fewer in boxes
+    sc.exmax = np.max(ex, axis=1)
+    sc.eymax = np.max(ey, axis=1)
+    sc.ezmax = np.max(ez, axis=1)
     
     tfull, efull, bounds = octree_et(sc, margin=0.0, cloth=cloth)
 
-    #T = time.time()
     for i in range(len(tfull)):
         t = tfull[i]
         e = efull[i]
@@ -445,14 +324,11 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
             #       we divide. So divide the left and right for example then get the new bounds for
             #       each side and so on...
     
-    #timer(time.time()-T, 'sort boxes')
-    #T = time.time()
-    
     sizes = [b[1].shape[0] for b in sc.big_boxes]
     if len(sizes) > 0:    
         check = max(sizes)
     
-    limit = 6
+    limit = 10
     count = 1
 
     done = False
@@ -473,13 +349,6 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
             break
         count += 1    
 
-    #timer(time.time()-T, 'b2')    
-    #if sc.report:
-    if 0:
-        print(len(sc.big_boxes), "how many big boxes")
-        print(len(sc.small_boxes), "how many small boxes")
-    
-    rt_()    
     for en, b in enumerate(sc.small_boxes):
         trs = np.array(b[0], dtype=np.int32)
         ed = np.array(b[1], dtype=np.int32) # can't figure out why this becomes an object array sometimes...
@@ -501,53 +370,45 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
         
         re = rse[~ab] # repeated edges with link faces removed
         rt = rst[~ab] # repeated triangles to match above edges
+        
+        if True:        
+            in_x = txmax[rt] >= sc.exmin[re]
+            rt, re = rt[in_x], re[in_x]
+
+            in_x2 = txmin[rt] <= sc.exmax[re]
+            rt, re = rt[in_x2], re[in_x2]
+
+            in_y = tymax[rt] >= sc.eymin[re]
+            rt, re = rt[in_y], re[in_y]
+
+            in_y2 = tymin[rt] <= sc.eymax[re]
+            rt, re = rt[in_y2], re[in_y2]
+
+            in_z = tzmin[rt] <= sc.ezmax[re]
+            rt, re = rt[in_z], re[in_z]
+            
+            in_z2 = tzmax[rt] >= sc.ezmin[re]
+            rt, re = rt[in_z2], re[in_z2]
                 
-        in_x = txmax[rt] > sc.exmin[re]
-        rt, re = rt[in_x], re[in_x]
-
-        in_x2 = txmin[rt] < sc.exmax[re]
-        rt, re = rt[in_x2], re[in_x2]
-
-        in_y = tymax[rt] > sc.eymin[re]
-        rt, re = rt[in_y], re[in_y]
-
-        in_y2 = tymin[rt] < sc.eymax[re]
-        rt, re = rt[in_y2], re[in_y2]
-
-        in_z = tzmin[rt] < sc.ezmax[re]
-        rt, re = rt[in_z], re[in_z]
-        
-        in_z2 = tzmax[rt] > sc.ezmin[re]
-        rt, re = rt[in_z2], re[in_z2]
-                                    
-        #timer(time.time()-T, 'edge bounds')
-        
-        T = time.time()
-        
         if rt.shape[0] > 0:
             
             sc.ees += re.tolist()
             sc.trs += rt.tolist()
-    #rt_('sc iterate')
     
 
 def ray_check_oc(sc, ed, trs, cloth):
     
     """Need to fix selected points by removing them
-    from the weights.
+    from the weights. (For working in edit mode)
     Need to join ob collide and self collide weights
     to improve stability."""
-    
     
     eidx = np.array(ed, dtype=np.int32)
     tidx = np.array(trs, dtype=np.int32)
 
-    undo_shift = True
-    if undo_shift:
-        sc.tris[:, :3] = cloth.select_start[cloth.tridex]# - shift)[cloth.tridex]
-        sc.tris[:, 3:] = cloth.co[cloth.tridex]# + shift)[cloth.tridex]
-             
-
+    sc.tris[:, :3] = cloth.select_start[cloth.tridex]# - shift)[cloth.tridex]
+    sc.tris[:, 3:] = cloth.co[cloth.tridex]# + shift)[cloth.tridex]
+         
     e = sc.edges[eidx]
     t = sc.tris[tidx]
 
@@ -563,7 +424,6 @@ def ray_check_oc(sc, ed, trs, cloth):
     u_start_norms = start_norms / np.sqrt(np.einsum('ij,ij->i', start_norms, start_norms))[:, None]
     start_vecs = start_co - start_ori
     start_dots = np.einsum('ij,ij->i', start_vecs, u_start_norms)
-    
     
     # normals from cloth.co (not from select_start)
     ori = t[:, 3]
@@ -587,7 +447,7 @@ def ray_check_oc(sc, ed, trs, cloth):
     start_check, start_weights_1 = inside_triangles(t[:, :3][in_margin], start_co[in_margin], margin= 0.0)
 
     #check = check_1 | start_check
-    check = check_1# | start_check
+    check = check_1 | start_check
     #check[:] = True
     start_weights = start_weights_1[check]
 
@@ -604,30 +464,9 @@ def ray_check_oc(sc, ed, trs, cloth):
     #now in theory I can use the weights from start tris
     combined_weights = True # weights with points and tris
     if combined_weights:
-        #tri_travel = np.repeat(travel, 3, axis=0)
-        
-#        trying to get the weights with tris combined...
-#        not sure how to do that...
-#        
-#        the tris bounce when overlap makes a point move because
-#        it's a point and it also moves because it's a back tri.
-#        It moves too far. I need to balance the wights for this.
-#        It has to be included in unique if it shows up in back tris.
-#        there are points in back tris that are not in points.
-#        getting the movement of the back tri points and adding
-#        them to the weight div is correct.
-#        there could be two tris that share a point that is not
-#        part of the point move. The point would get double movement
-#        even though its not in the move points so it needs to be
-#        accumulated for the weights.
-#        so we get the unique array and the stretch array that includes
-#        the back tri points.
-#        now... whats the next math?
-        
-        
+
         tp = cloth.tridex[tidx[in_margin][check]].ravel()
         joined = np.append(co_idx, tp)
-        
         
         uni, inv, counts = np.unique(joined, return_inverse=True, return_counts=True)
         
@@ -645,70 +484,12 @@ def ray_check_oc(sc, ed, trs, cloth):
         
         joined_travel *= (weights[:, None] * scf)
 
-
         ntn = np.nan_to_num(joined_travel)
         np.add.at(cloth.co, joined, ntn)
 
         fr = cloth.ob.MC_props.sc_friction
         if fr > 0:
             cloth.velocity[co_idx] *= (1 - fr)
-
-        
-        return        
-        back_tris = True
-        #back_tris = False
-        #if cloth.ob.MC_props.p1_cloth:        
-        if back_tris:        
-            tridex = cloth.tridex[tidx[in_margin][check]]
-            np.subtract.at(cloth.co, tridex.ravel(), np.repeat(ntn * .25, 3, axis=0))
-        
-
-        
-        return
-        
-    lens = np.sqrt(np.einsum('ij,ij->i', travel, travel))
-    uni, inv, counts = np.unique(co_idx, return_inverse=True, return_counts=True)
-    stretch_array = np.zeros(uni.shape[0], dtype = np.float32)
-    np.add.at(stretch_array, inv, lens)
-    weights = lens / stretch_array[inv]
-    #travel *= (weights[:, None] * .777)            
-    #travel *= (weights[:, None])# * .777)            
-    travel *= (weights[:, None] * .5)#.777)            
-
-    # add friction force:
-    fr = cloth.ob.MC_props.sc_friction
-    if fr > 0:
-        ve = fr
-        if ve > 1:
-            ve = 1
-            print(ve)
-        cloth.velocity[co_idx] *= (1 - ve)
-        
-#        if False: # causes instabilities when multiple layers compete.
-#            pl_move = (loc - cloth.co[co_idx]) * fr * .2
-
-#            lens = np.sqrt(np.einsum('ij,ij->i', pl_move, pl_move))
-#            #uni, inv, counts = np.unique(co_idx, return_inverse=True, return_counts=True)
-#            stretch_array[:] = 0.0# np.zeros(uni.shape[0], dtype = np.float32)
-#            np.add.at(stretch_array, inv, lens)
-#            weights = lens / stretch_array[inv]
-#            #pl_move *= (weights[:, None] * .777)    
-#            pl_move *= (weights[:, None] * .5)    
-
-#            np.add.at(cloth.co, co_idx, np.nan_to_num(pl_move))
-
-    ntn = np.nan_to_num(travel)
-    np.add.at(cloth.co, co_idx, ntn)
-            
-    back_tris = True
-    #back_tris = False
-    #if cloth.ob.MC_props.p1_cloth:        
-    if back_tris:        
-        tridex = cloth.tridex[tidx[in_margin][check]]
-        np.subtract.at(cloth.co, tridex.ravel(), np.repeat(ntn * .25, 3, axis=0))
-    
-    #cloth.co[cloth.previous_sc] = prev[cloth.previous_sc]
-    #cloth.previous_sc = uni
     
 
 class SelfCollide():
@@ -724,55 +505,31 @@ class SelfCollide():
         
         cloth.sc_co[:cloth.v_count] = cloth.select_start
         cloth.sc_co[cloth.v_count:] = cloth.co
-        self.fco = cloth.co
+
+        offset_tris = True
+        if offset_tris:        
+            M = cloth.ob.MC_props.self_collide_margin# * .5
+            shift = cloth.v_norms * M# * 0
+            self.shift = shift
+            tris_six[:, :3] = (cloth.select_start - shift)[cloth.tridex]
+            tris_six[:, 3:] = (cloth.co + shift)[cloth.tridex]
+        else:
+            tris_six[:, :3] = cloth.select_start[cloth.tridex]
+            tris_six[:, 3:] = cloth.co[cloth.tridex]
         
-        M = cloth.ob.MC_props.self_collide_margin * .5
-        shift = cloth.v_norms * M
-        self.shift = shift
-        tris_six[:, :3] = (cloth.select_start - shift)[cloth.tridex]
-        tris_six[:, 3:] = (cloth.co + shift)[cloth.tridex]
-        
-        if False:
-            M = cloth.ob.MC_props.self_collide_margin
-            cloth.surface_offset_tris[:, 0] = (cloth.co - (cloth.sc_normals * M))[cloth.tridex]
-            cloth.surface_offset_tris[:, 1] = (cloth.co + (cloth.sc_normals * M))[cloth.tridex]
         # -----------------------
-        
-        self.has_col = False
 
-        #self.indexer = cloth.sc_indexer
-
-        #self.box_max = cloth.ob.MC_props.sc_box_max
-        self.box_max = 150#cloth.ob.MC_props.sc_box_max
+        self.box_max = cloth.ob.MC_props.sc_box_max
+        #self.box_max = 190#cloth.ob.MC_props.sc_box_max
 
         self.M = cloth.ob.MC_props.self_collide_margin
-        #self.force = cloth.ob.MC_props.self_collide_force
         
         self.tris = tris_six
         self.edges = cloth.sc_co[cloth.sc_edges]
+
         self.big_boxes = [] # boxes that still need to be divided
         self.small_boxes = [] # finished boxes less than the maximum box size
 
-        # debug stuff
-        self.sel = False
-        #self.sel = True
-        self.report = False
-        #self.report = True
-        if self.report:
-            self.select_counter = np.zeros(cloth.sc_eidx.shape[0], dtype=np.int32)        
-        if self.sel:
-            if self.ob.data.is_editmode:
-                self.obm = bmesh.from_edit_mesh(self.ob.data)
-            else:    
-                self.obm = bmesh.new()
-                self.obm.from_mesh(self.ob.data)
-            self.obm.edges.ensure_lookup_table()
-            self.obm.verts.ensure_lookup_table()
-            self.obm.faces.ensure_lookup_table()
-
-        # store sets of edge and tris to check
-        #self.trs = np.empty((0), dtype=np.int32)
-        #self.ees = np.empty((0), dtype=np.int32)
         self.trs = []
         self.ees = []
         
@@ -780,24 +537,8 @@ class SelfCollide():
 def detect_collisions(cloth):
     
     sc = SelfCollide(cloth)
-    t = time.time()
-
     self_collisions_7(sc, sc.M, cloth)
-
-    #for i in range(2):    
     ray_check_oc(sc, sc.ees, sc.trs, cloth)
-        
-    if sc.report:
-        print(sc.box_max, "box max")
-        print(np.sum(sc.select_counter > 1), ": In too many boxes")
-        print(np.max(sc.select_counter), "max times and edge was selected")
-        print(time.time() - t)
-        
-    if sc.sel:
-        if ob.data.is_editmode:
-            bmesh.update_edit_mesh(ob.data)
-            
-        ob.data.update()
 
 
 def register():
@@ -810,55 +551,3 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-
-
-'''
-
-
-
-'''
-
-
-
-'''
-Might want to look into skipping
-the bounds check. Just use smaller boxes
-and go straight to check every pair for
-which side of tri...
-
-so I group the tris in sets of 6.
-the start and end tri.
-I get the bounds from that.
-So bounding boxes will be around
-
-a tri is like Nx3x3
-a moving tri is like Nx6x3
-I still get the bounds from axis 1
-
-I can use the start and end of each point
-just like an edge. Should be able
-to set up phony edge indexing and
-use the exact same system.
-Should work all the way until raycast.
-
-once we get to raycast...
-were dealing with edges that are the
-start and end of moving points
-and two tris that ar the start and
-end of a moving tri.
-I can check what side Im on
-in the beginning by getting the
-dot of the point origin and the normal
-for the start edge and the start tri...
-If I get what side the end tri and end
-point are on and its different I could
-then do a bary check...
-
-Should I bary check both points?
-drop to plane with first tri?
-drop to plane with second tri?
-bary check without dropping to plane?
-check 1st tri without dropping to plane?
-check 2nd tri without dropping to plane?
-
-'''

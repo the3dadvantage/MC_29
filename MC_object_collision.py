@@ -45,7 +45,7 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs):
 
     w = 1 - (u+v)
     # !!!! needs some thought
-    margin = -0.05
+    margin = 0.0
     # !!!! ==================
     weights = np.array([w, u, v]).T
     check = (u >= margin) & (v >= margin) & (w >= margin)
@@ -281,17 +281,15 @@ def self_collisions_7(sc, cloth=None):
     tx = sc.tris[:, :, 0]
     ty = sc.tris[:, :, 1]
     tz = sc.tris[:, :, 2]
-
-    margin = 0.0
     
-    txmax = np.max(tx, axis=1)# + margin
-    txmin = np.min(tx, axis=1)# - margin
+    txmax = np.max(tx, axis=1)
+    txmin = np.min(tx, axis=1)
 
-    tymax = np.max(ty, axis=1)# + margin
-    tymin = np.min(ty, axis=1)# - margin
+    tymax = np.max(ty, axis=1)
+    tymin = np.min(ty, axis=1)
 
-    tzmax = np.max(tz, axis=1)# + margin
-    tzmin = np.min(tz, axis=1)# - margin
+    tzmax = np.max(tz, axis=1)
+    tzmin = np.min(tz, axis=1)
 
     sc.txmax = txmax
     sc.txmin = txmin
@@ -307,36 +305,16 @@ def self_collisions_7(sc, cloth=None):
     ey = sc.edges[:, :, 1]
     ez = sc.edges[:, :, 2]
 
-#    last I checked the margin made no difference
-#    Think there was an isue with cloth.v_norms
-#    Might be able to use the tris from
-#    cloth.v_norms to get friction to work
-#    right. Might even get better collisions
-#    by checking tris from v_norm offset tris.
-#    Stuff to try anyway...
-
-    margin = 0.0
-    #margin = cloth.ob.MC_props.self_collide_margin
-    if margin == 0.0:
-        sc.exmin = np.min(ex, axis=1)
-        sc.eymin = np.min(ey, axis=1)
-        sc.ezmin = np.min(ez, axis=1)
-        
-        sc.exmax = np.max(ex, axis=1)
-        sc.eymax = np.max(ey, axis=1)
-        sc.ezmax = np.max(ez, axis=1)
-    else:
-        sc.exmin = np.min(ex, axis=1) - margin
-        sc.eymin = np.min(ey, axis=1) - margin
-        sc.ezmin = np.min(ez, axis=1) - margin
-        
-        sc.exmax = np.max(ex, axis=1) + margin
-        sc.eymax = np.max(ey, axis=1) + margin
-        sc.ezmax = np.max(ez, axis=1) + margin
+    sc.exmin = np.min(ex, axis=1)
+    sc.eymin = np.min(ey, axis=1)
+    sc.ezmin = np.min(ez, axis=1)
+    
+    sc.exmax = np.max(ex, axis=1)
+    sc.eymax = np.max(ey, axis=1)
+    sc.ezmax = np.max(ez, axis=1)
     
     tfull, efull, bounds = octree_et(sc, margin=0.0, cloth=cloth)
 
-    #T = time.time()
     for i in range(len(tfull)):
         t = tfull[i]
         e = efull[i]
@@ -454,28 +432,21 @@ def ray_check_oc(sc, ed, trs, cloth):
     switch = (start_dots >= 0) & (dots <= 0)
     
     so_far = eidx[switch]
-    t[:, :3][switch]
 
-    skip_friction = False # maybe for p1?
+
+    skip_friction = False # maybe for p1? Don't need revert
     #skip_friction = True # maybe for p1?
     if skip_friction:
-        no_fr = (-un[switch] * dots[switch][:, None])# * (1 - tf_so_far)
-        #rev = revert_rotation(cloth.ob, no_fr) # p1 won't need rev
-        #cloth.co[so_far] += rev
+        no_fr = (-un[switch] * dots[switch][:, None])
         cloth.co[so_far] += no_fr
         return
-            
         
-    st = sc.fr_tris[tidx]
-    
+    st = sc.fr_tris[tidx]    
     start_check, start_weights = inside_triangles(st[switch], start_co[switch], margin= 0.0)
-    
     fr_idx = tidx[switch]
-
     weight_plot = t[:, 3:][switch] * start_weights[:, :, None]
 
-    cl = co[switch]
-    
+    cl = co[switch]    
     tf_so_far = cloth.total_friction[fr_idx]
     
     fr_move = np.sum(weight_plot, axis=1) - cl
@@ -488,7 +459,6 @@ def ray_check_oc(sc, ed, trs, cloth):
     mixed[stat] = fr_move[stat]
     
     rev = revert_rotation(cloth.ob, mixed)
-    
     cloth.co[so_far] += rev
     
 
@@ -500,18 +470,11 @@ class ObjectCollide():
         # -----------------------
         ob = cloth.ob
         tris_six = cloth.oc_tris_six
-
         tridex = cloth.oc_total_tridex
-        
-        #cloth.sc_co[:cloth.v_count] = cloth.select_start
-        #cloth.sc_co[cloth.v_count:] = cloth.co
 
-        #M = cloth.ob.MC_props.outer_margin# * .5
-        #print(cloth.ob_v_norms)
-        #print(cloth.total_co)
-        shift = cloth.ob_v_norms * cloth.outer_margins# * 0
-        ishift = cloth.ob_v_norms * cloth.inner_margins# * 0
-        #shift = cloth.ob_v_norms * .3# cloth.outer_margins# * 0
+        shift = cloth.ob_v_norms * cloth.outer_margins
+        ishift = cloth.ob_v_norms * cloth.inner_margins
+
         self.shift = shift
         self.ishift = ishift
         tris_six[:, :3] = (cloth.last_co - ishift)[tridex]
@@ -519,19 +482,8 @@ class ObjectCollide():
         
         self.fr_tris = (cloth.last_co + shift)[tridex]
         # -----------------------
-        
-        self.exm = .5 # experimental margin
-        
-        self.has_col = False
 
-        #self.indexer = cloth.sc_indexer
-
-        #self.box_max = cloth.ob.MC_props.sc_box_max
         self.box_max = 150#cloth.ob.MC_props.sc_box_max
-
-        #self.M = M#cloth.ob.MC_props.self_collide_margin
-        #self.M = cloth.ob.MC_props.self_collide_margin
-        #self.force = cloth.ob.MC_props.self_collide_force
         
         self.tris = tris_six
         self.edges = cloth.ob_co[cloth.sc_edges]
@@ -539,26 +491,6 @@ class ObjectCollide():
         self.big_boxes = [] # boxes that still need to be divided
         self.small_boxes = [] # finished boxes less than the maximum box size
 
-        # debug stuff
-        self.sel = False
-        #self.sel = True
-        self.report = False
-        #self.report = True
-        if self.report:
-            self.select_counter = np.zeros(cloth.sc_eidx.shape[0], dtype=np.int32)        
-        if self.sel:
-            if self.ob.data.is_editmode:
-                self.obm = bmesh.from_edit_mesh(self.ob.data)
-            else:    
-                self.obm = bmesh.new()
-                self.obm.from_mesh(self.ob.data)
-            self.obm.edges.ensure_lookup_table()
-            self.obm.verts.ensure_lookup_table()
-            self.obm.faces.ensure_lookup_table()
-
-        # store sets of edge and tris to check
-        #self.trs = np.empty((0), dtype=np.int32)
-        #self.ees = np.empty((0), dtype=np.int32)
         self.trs = []
         self.ees = []
         
@@ -566,24 +498,8 @@ class ObjectCollide():
 def detect_collisions(cloth):
     
     sc = ObjectCollide(cloth)
-    t = time.time()
-
     self_collisions_7(sc, cloth)
-
-    #for i in range(2):    
     ray_check_oc(sc, sc.ees, sc.trs, cloth)
-    
-    if sc.report:
-        print(sc.box_max, "box max")
-        print(np.sum(sc.select_counter > 1), ": In too many boxes")
-        print(np.max(sc.select_counter), "max times and edge was selected")
-        print(time.time() - t)
-        
-    if sc.sel:
-        if ob.data.is_editmode:
-            bmesh.update_edit_mesh(ob.data)
-            
-        ob.data.update()
 
 
 def register():

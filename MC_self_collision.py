@@ -45,6 +45,20 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs): # could plug thes
     return check, weights
 
 
+def eliminate_duplicate_pairs(ar, sort=True):
+    """Eliminates duplicates and mirror duplicates.
+    for example, [1,4], [4,1] or duplicate occurrences of [1,4]
+    Returns an Nx2 array."""
+    # no idea how this works (probably sorcery) but it's really fast
+    a = ar
+    if sort:
+        a = np.sort(ar, axis=1)
+    x = np.array(np.random.rand(a.shape[1]), dtype=np.float32)
+    y = a @ x
+    unique, index = np.unique(y, return_index=True)
+    return a[index], index
+
+
 def b2(sc, cloth, count):
     #print('running b2 self_collisions', count)
     if len(sc.big_boxes) == 0:
@@ -299,7 +313,6 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
     ey = sc.edges[:, :, 1]
     ez = sc.edges[:, :, 2]
 
-
     sc.exmin = np.min(ex, axis=1)
     sc.eymin = np.min(ey, axis=1)
     sc.ezmin = np.min(ez, axis=1)
@@ -356,8 +369,8 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
         if ed.shape[0] == 0:
             continue
         
-        tris = sc.tris[trs]
-        eds = sc.edges[ed]
+        #tris = sc.tris[trs]
+        #eds = sc.edges[ed]
         
         # detect link faces and broadcast
         nlf_0 = cloth.sc_edges[ed][:, 0] == cloth.tridex[trs][:, :, None]
@@ -406,6 +419,7 @@ def ray_check_oc(sc, ed, trs, cloth):
     eidx = np.array(ed, dtype=np.int32)
     tidx = np.array(trs, dtype=np.int32)
 
+    # undo the offset:
     sc.tris[:, :3] = cloth.select_start[cloth.tridex]# - shift)[cloth.tridex]
     sc.tris[:, 3:] = cloth.co[cloth.tridex]# + shift)[cloth.tridex]
          
@@ -446,8 +460,8 @@ def ray_check_oc(sc, ed, trs, cloth):
     check_1, weights = inside_triangles(t[:, 3:][in_margin], co[in_margin], margin= -0.1)
     start_check, start_weights_1 = inside_triangles(t[:, :3][in_margin], start_co[in_margin], margin= 0.0)
 
+    check = check_1# | start_check
     #check = check_1 | start_check
-    check = check_1 | start_check
     #check[:] = True
     start_weights = start_weights_1[check]
 

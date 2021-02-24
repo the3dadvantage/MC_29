@@ -14,6 +14,7 @@ if "bpy" in locals():
     import imp
     imp.reload(MC_self_collision)
     imp.reload(MC_object_collision)
+    imp.reload(MC_pierce)
     imp.reload(MC_29)
     #imp.reload(ModelingCloth)
     #imp.reload(SurfaceFollow)
@@ -23,14 +24,15 @@ if "bpy" in locals():
 else:
     from . import MC_self_collision#, SurfaceFollow, UVShape, DynamicTensionMap
     from . import MC_object_collision#, SurfaceFollow, UVShape, DynamicTensionMap
+    from . import MC_pierce
     from . import MC_29#, SurfaceFollow, UVShape, DynamicTensionMap
-    #from . import ModelingCloth
     print("Imported Modeling Cloth")
 
    
 def register():
     MC_self_collision.register()
     MC_object_collision.register()
+    MC_pierce.register()
     MC_29.register()
     #ModelingCloth.register()    
     #SurfaceFollow.register()
@@ -41,6 +43,7 @@ def register():
 def unregister():
     MC_self_collision.unregister()
     MC_object_collision.unregister()
+    MC_pierce.unregister()
     MC_29.unregister()
     #ModelingCloth.unregister()
     #SurfaceFollow.unregister()

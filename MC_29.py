@@ -86,7 +86,7 @@ try:
 except:
     MC_object_collision = bpy.data.texts['MC_object_collision.py'].as_module()
     MC_self_collision = bpy.data.texts['MC_self_collision.py'].as_module()
-    MC_pierce_collision = bpy.data.texts['MC_pierce.py'].as_module()
+    MC_pierce = bpy.data.texts['MC_pierce.py'].as_module()
     print("Tried to import internal texts.")
 
 
@@ -2550,7 +2550,7 @@ def pierce_collide(cloth):
     if not cloth.ob.MC_props.self_collide:
         update_v_norms(cloth) # because self collide runs it
     cloth.pierce_co = cloth.co[cloth.eidx]
-    MC_pierce_collision.detect_collisions(cloth)
+    MC_pierce.detect_collisions(cloth)
 
 
 def ob_collide(cloth):

@@ -15,7 +15,7 @@ def rt_(num=None):
 
 def revert_rotation(ob, co):
     """When reverting vectors such as normals we only need
-    to rotate"""
+    to rotate. Forces need to be scaled"""
     m = np.array(ob.matrix_world)
     mat = m[:3, :3] / np.array(ob.scale, dtype=np.float32) # rotates backwards without T
     return (co @ mat) / np.array(ob.scale, dtype=np.float32)
@@ -80,7 +80,7 @@ def b2(sc, cloth, count):
     sc.big_boxes = boxes
         
 
-def generate_bounds(minc, maxc, margin):
+def generate_bounds(minc, maxc):
     """from a min corner and a max corner
     generate the min and max corner of 8 boxes"""
 
@@ -131,12 +131,163 @@ def generate_bounds(minc, maxc, margin):
     return mid, [mins, maxs]
 
 
+def octree_one(sc, cloth):
+    co = cloth.ob_co # made from start and end apply_transforms co stacked left to right in Nx3 (not Nx2x3)
+    
+    b_min = np.min(co, axis=0)
+    b_max = np.max(co, axis=0)
+    
+    bpy.data.objects['ee'].location = b_max
+        
+    # bounds_8 is for use on the next iteration.
+    mid, bounds_8 = generate_bounds(b_min, b_max)
+    
+    x, y, z = mid[0], mid[1], mid[2]
+
+    idx = cloth.oc_indexer
+    eidx = cloth.sc_eidx
+
+    # tris
+    xmax = sc.txmax
+    xmin = sc.txmin
+
+    ymax = sc.tymax
+    ymin = sc.tymin
+
+    zmax = sc.tzmax
+    zmin = sc.tzmin
+
+    # edges
+    exmin = sc.exmin
+    eymin = sc.eymin
+    ezmin = sc.ezmin
+    
+    exmax = sc.exmax
+    eymax = sc.eymax
+    ezmax = sc.ezmax
+
+    xma, yma, zma = b_max[0], b_max[1], b_max[2]
+    xmi, ymi, zmi = b_min[0], b_min[1], b_min[2]
+
+    # l = left, r = right, f = front, b = back, u = up, d = down
+    # -------------------------------
+    B = (xmin <= x) & (xmax >= xmi)
+    il = idx[B]
+
+    B = (xmax >= x) & (xmin <= xma)
+    ir = idx[B]
+    
+    # edges
+    eB = exmin <= x
+    eil = eidx[eB]
+
+    eB = exmax >= x
+    eir = eidx[eB]
+
+    # ------------------------------
+    ymaxil = ymax[il]
+    yminil = ymin[il]
+
+    B = (ymaxil >= y) & (yminil <= yma)
+    ilf = il[B]
+
+    B = (yminil <= y) & (ymaxil >= ymi)
+    ilb = il[B]
+    
+    ymaxir = ymax[ir]
+    yminir = ymin[ir]
+
+    B = (ymaxir >= y) & (yminir <= yma)
+    irf = ir[B]
+
+    B = (yminir <= y) & (ymaxir >= ymi)
+    irb = ir[B]
+    
+    # edges
+    eB = eymax[eil] >= y
+    eilf = eil[eB]
+
+    eB = eymin[eil] <= y
+    eilb = eil[eB]
+
+    eB = eymax[eir] >= y
+    eirf = eir[eB]
+
+    eB = eymin[eir] <= y
+    eirb = eir[eB]
+
+    # ------------------------------
+    zmaxilf = zmax[ilf]
+    zminilf = zmin[ilf]
+    B = (zmaxilf >= z) & (zminilf <= zma)
+    ilfu = ilf[B]
+    B = (zminilf <= z) & (zmaxilf >= zmi)
+    ilfd = ilf[B]
+
+    zmaxilb = zmax[ilb]
+    zminilb = zmin[ilb]
+    B = (zmaxilb >= z) & (zminilb <= zma)
+    ilbu = ilb[B]
+    B = (zminilb <= z) & (zmaxilb >= zmi)
+    ilbd = ilb[B]
+
+    zmaxirf = zmax[irf]
+    zminirf = zmin[irf]
+    B = (zmaxirf >= z) & (zminirf <= zma)
+    irfu = irf[B]
+    B = (zminirf <= z) & (zmaxirf >= zmi)
+    irfd = irf[B]
+
+    zminirb = zmin[irb]
+    zmaxirb = zmax[irb]
+    B = (zmaxirb >= z) & (zminirb <= zma)
+    irbu = irb[B]
+    B = (zminirb <= z) & (zmaxirb >= zmi)
+    irbd = irb[B]
+
+    # edges
+    eB = ezmax[eilf] >= z
+    eilfu = eilf[eB]
+    eB = ezmin[eilf] <= z
+    eilfd = eilf[eB]
+
+    eB = ezmax[eilb] >= z
+    eilbu = eilb[eB]
+    eB = ezmin[eilb] <= z
+    eilbd = eilb[eB]
+
+    eB = ezmax[eirf] >= z
+    eirfu = eirf[eB]
+    eB = ezmin[eirf] <= z
+    eirfd = eirf[eB]
+
+    eB = ezmax[eirb] >= z
+    eirbu = eirb[eB]
+    eB = ezmin[eirb] <= z
+    eirbd = eirb[eB]    
+
+    boxes = [ilbd, irbd, ilfd, irfd, ilbu, irbu, ilfu, irfu]
+    eboxes = [eilbd, eirbd, eilfd, eirfd, eilbu, eirbu, eilfu, eirfu]
+    
+    bbool = np.array([i.shape[0] > 0 for i in boxes])
+    ebool = np.array([i.shape[0] > 0 for i in eboxes])
+    both = bbool & ebool
+    
+    full = np.array(boxes, dtype=np.object)[both]
+    efull = np.array(eboxes, dtype=np.object)[both]
+
+    if not np.any(both):
+        return
+        
+    return full, efull, [bounds_8[0][both], bounds_8[1][both]]
+
+
 def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     """Adaptive octree. Good for finding doubles or broad
     phase collision culling. et does edges and tris.
     Also groups edges in boxes.""" # first box is based on bounds so first box could be any shape rectangle
     
-    co = cloth.ob_co
+    co = cloth.ob_co # made from start and end apply_transforms co stacked left to right in Nx3 (not Nx2x3)
     
     if bounds is None:
         b_min = np.min(co, axis=0)
@@ -145,7 +296,7 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
         b_min, b_max = bounds[0], bounds[1]
         
     # bounds_8 is for use on the next iteration.
-    mid, bounds_8 = generate_bounds(b_min, b_max, margin)
+    mid, bounds_8 = generate_bounds(b_min, b_max)
     
     mid_ = mid
     _mid = mid
@@ -175,6 +326,7 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     # l = left, r = right, f = front, b = back, u = up, d = down
     if idx is None:
         idx = cloth.oc_indexer
+
     if eidx is None:    
         eidx = cloth.sc_eidx
 
@@ -182,7 +334,7 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     eidx = np.array(eidx, dtype=np.int32)
 
     # -------------------------------
-    B = xmin[idx] <= x_
+    B = xmin[idx] <= x_ 
     il = idx[B]
 
     B = xmax[idx] >= _x
@@ -272,7 +424,7 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     
     full = np.array(boxes, dtype=np.object)[both]
     efull = np.array(eboxes, dtype=np.object)[both]
-
+    
     return full, efull, [bounds_8[0][both], bounds_8[1][both]]
     
 
@@ -313,7 +465,12 @@ def self_collisions_7(sc, cloth=None):
     sc.eymax = np.max(ey, axis=1)
     sc.ezmax = np.max(ez, axis=1)
     
-    tfull, efull, bounds = octree_et(sc, margin=0.0, cloth=cloth)
+    #tfull, efull, bounds = octree_et(sc, margin=0.0, cloth=cloth)
+    ot1 = octree_one(sc, cloth)
+    if ot1 is None:
+        return
+    
+    tfull, efull, bounds = ot1
 
     for i in range(len(tfull)):
         t = tfull[i]
@@ -361,8 +518,8 @@ def self_collisions_7(sc, cloth=None):
         if ed.shape[0] == 0:
             continue
         
-        tris = sc.tris[trs]
-        eds = sc.edges[ed]
+        #tris = sc.tris[trs]
+        #eds = sc.edges[ed]
         
         # detect link faces and broadcast
         #nlf_0 = cloth.sc_edges[ed][:, 0] == cloth.tridex[trs][:, :, None]
@@ -399,6 +556,7 @@ def self_collisions_7(sc, cloth=None):
             
             sc.ees += re.tolist()
             sc.trs += rt.tolist()
+    return True
     
 
 def ray_check_oc(sc, ed, trs, cloth):
@@ -442,24 +600,51 @@ def ray_check_oc(sc, ed, trs, cloth):
         return
         
     st = sc.fr_tris[tidx]    
-    start_check, start_weights = inside_triangles(st[switch], start_co[switch], margin= 0.0)
-    fr_idx = tidx[switch]
-    weight_plot = t[:, 3:][switch] * start_weights[:, :, None]
+    check, start_weights = inside_triangles(st[switch], start_co[switch], margin= 0.0)
+        
+    static = True    
+    if static:
+        so_far = eidx[switch][check]
+        fr_idx = tidx[switch][check]
+        weight_plot = t[:, 3:][switch][check] * start_weights[:, :, None][check]
 
-    cl = co[switch]    
-    tf_so_far = cloth.total_friction[fr_idx]
-    
-    fr_move = np.sum(weight_plot, axis=1) - cl
-    fr = fr_move * tf_so_far
-    no_fr = (-un[switch] * dots[switch][:, None]) * (1 - tf_so_far)
+        cl = co[switch][check]    
+        tf_so_far = cloth.total_friction[fr_idx]
+        
+        fr_move = np.sum(weight_plot, axis=1) - cl
+        fr = fr_move * tf_so_far
+        no_fr = (-un[switch][check] * dots[switch][check][:, None]) * (1 - tf_so_far)
 
-    mixed = fr + no_fr
+        mixed = fr + no_fr
+        
+        stat = (cloth.move_dist[so_far] < cloth.total_static[fr_idx])
+        mixed[stat] = fr_move[stat]
+        
+        rev = revert_rotation(cloth.ob, mixed)
+        cloth.co[so_far] += rev
+        
     
-    stat = (cloth.move_dist[so_far] < cloth.total_static[fr_idx])
-    mixed[stat] = fr_move[stat]
-    
-    rev = revert_rotation(cloth.ob, mixed)
-    cloth.co[so_far] += rev
+    else:        
+        fr_idx = tidx[switch]
+        weight_plot = t[:, 3:][switch] * start_weights[:, :, None]
+
+        cl = co[switch]    
+        tf_so_far = cloth.total_friction[fr_idx]
+        
+        fr_move = np.sum(weight_plot, axis=1) - cl
+        fr = fr_move * tf_so_far
+        no_fr = (-un[switch] * dots[switch][:, None]) * (1 - tf_so_far)
+
+        mixed = fr + no_fr
+        
+        stat = (cloth.move_dist[so_far] < cloth.total_static[fr_idx])
+        mixed[stat] = fr_move[stat]
+        
+        rev = revert_rotation(cloth.ob, mixed)
+        cloth.co[so_far] += rev
+        
+        #uni, counts, inv = np.unique(so_far, return_counts)
+        
     
 
 class ObjectCollide():
@@ -498,7 +683,9 @@ class ObjectCollide():
 def detect_collisions(cloth):
     
     sc = ObjectCollide(cloth)
-    self_collisions_7(sc, cloth)
+    oc = self_collisions_7(sc, cloth)
+    if oc is None:
+        return
     ray_check_oc(sc, sc.ees, sc.trs, cloth)
 
 

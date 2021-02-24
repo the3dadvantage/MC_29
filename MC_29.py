@@ -72,7 +72,6 @@ try:
     import time
     import copy # for duplicate cloth objects
 
-
 except ImportError:
     print("didn't import correctly")
     print("didn't import correctly")
@@ -176,13 +175,59 @@ def np_co_to_text(ob, co, rw='w', cloth=None):
     ob.data.update()
 
 
+def remake_mesh(name, cloth):
+
+    for m in bpy.data.meshes:
+        if m.name == name:
+            bpy.data.meshes.remove(m)
+
+    for o in bpy.data.objects:
+        if o.name == name:
+            bpy.data.objects.remove(o)
+
+    v = cloth.total_co.tolist()
+    e = []
+    f = cloth.oc_total_tridex.tolist()
+    
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(v, e, f)
+    mesh.update()
+    mesh_ob = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(mesh_ob)
+    #mesh_ob.hide_viewport = True
+    return mesh_ob
+
+
+def manage_collider_mesh(cloth):
+    
+    name = 'MC_OBC_@?!'
+    
+    if name not in bpy.data.meshes:
+        cloth.collide_mesh = remake_mesh(name, cloth)
+        return
+    if name not in bpy.data.objects:
+        cloth.collide_mesh = remake_mesh(name, cloth)
+        return
+    
+    cloth.collide_mesh = bpy.data.objects[name]
+    if len(cloth.collide_mesh.data.vertices) != cloth.total_co.shape[0]:
+        cloth.collide_mesh = remake_mesh(name, cloth)
+        return    
+    
+    cloth.collide_mesh.hide_viewport = True
+    cloth.collide_mesh.data.vertices.foreach_set('co', cloth.total_co.ravel())
+    cloth.collide_mesh.data.update()
+        
+
 # developer functions ------------------------
 def get_proxy_co(ob, co=None, proxy=None, return_proxy=False):
     """Gets co with modifiers like cloth"""
     if proxy is None:
 
         #dg = bpy.context.evaluated_depsgraph_get()
+        
         dg = glob_dg
+        #dg.update()
         prox = ob.evaluated_get(dg)
         proxy = prox.to_mesh()
 
@@ -194,6 +239,7 @@ def get_proxy_co(ob, co=None, proxy=None, return_proxy=False):
     if return_proxy:
         return co, proxy, prox
     
+    ob.to_mesh_clear()
     return co
 
 
@@ -792,10 +838,10 @@ def Nx3(ob):
 
 # universal ---------------
 def get_co_edit(ob, ar=None, key='MC_current'):
+    ob.update_from_editmode()
     if ar is None:
         c = len(ob.data.vertices)
         ar = np.empty((c, 3), dtype=np.float32)
-    ob.update_from_editmode()
     #ob.data.vertices.foreach_get('co', ar.ravel())
     ob.data.shape_keys.key_blocks[key].data.foreach_get('co', ar.ravel())
     return ar
@@ -1426,25 +1472,33 @@ def get_cloth(ob):
 # precalculated ---------------
 def closest_point_mesh(cloth, target):
     """Using blender built-in method"""
-    
+    #target.data.update()
+    #manage_collider_mesh(cloth)
     note = 'can use this to do surface follow with some mods'
     note_2 = 'currently only works with one collider'
     
+    #cm = bpy.data.objects['MC_OBC_@?!']
+    #dg = glob_dg
+    #target = dg.objects.get(cm.name)
+    dg = bpy.context.evaluated_depsgraph_get()
+    #target = cm.evaluated_get(dg)
     # get world co for cloth
     lco = apply_transforms(cloth.ob, cloth.co)
-    
+
     # apply cloth world to object local
     ico = invert_transforms(target, lco)
-    
+        
     co = []
     for c in ico:
-        hit, loc, norm, face_index = target.closest_point_on_mesh(c)
+        #hit, loc, norm, face_index = target.closest_point_on_mesh(c)
+        hit, loc, norm, face_index = target.closest_point_on_mesh(c, distance=1.84467e+19, depsgraph=dg)
         co += [loc]
+        
+    cloth.last_cpm = apply_transforms(target, co)
+
     
-    ap_co = apply_transforms(target, co)
-    
-    vecs = ap_co - lco
-    
+    vecs = cloth.last_cpm - lco
+
     # apply global force to cloth local
     move = revert_rotation(cloth.ob, vecs)
 
@@ -2424,7 +2478,17 @@ def edge_edge_spencer_model(coth):
 
 def wrap_force(cloth, avatar, frame=0):
     
-    move = closest_point_mesh(cloth, avatar)
+    if avatar.data.is_editmode:
+        if cloth.last_cpm is None:
+            return    
+        lco = apply_transforms(cloth.ob, cloth.co)
+        vecs = cloth.last_cpm - lco
+        move = revert_rotation(cloth.ob, vecs)
+        #return
+    #print('before cpm')
+    else:    
+        move = closest_point_mesh(cloth, avatar)
+    #print('after cpm')
     
     cloth.co += move * cloth.ob.MC_props.wrap_force
     #cloth.wrap_force = co - cloth.co
@@ -2588,6 +2652,9 @@ def ob_collide(cloth):
     cloth.ob_co[cloth.v_count:] = fco        
 
     cloth.OM = cloth.ob.MC_props.outer_margin
+    
+    # could skip this for performance
+    #   if the mesh is static... (initializes with Collider())
     update_ob_v_norms(cloth)
 
     ob_settings = not cloth.ob.MC_props.override_settings
@@ -2724,9 +2791,9 @@ def spring_basic_no_sw(cloth):
     if cloth.ob.MC_props.detangle: # cloth.ob.MC_props.pierce_collide:
         pierce_collide(cloth)
     
-    if cloth.ob.MC_props.wrap_force != 0:
-        if cloth.wrap_force is not None:    
-            cloth.co += cloth.wrap_force * cloth.ob.MC_props.wrap_force
+    #if cloth.ob.MC_props.wrap_force != 0:
+        #if cloth.wrap_force is not None:    
+            #cloth.co += cloth.wrap_force * cloth.ob.MC_props.wrap_force
 
     update_pins_select_sew_surface(cloth) # also hooks
 
@@ -3004,6 +3071,7 @@ def refresh(cloth, skip=False):
     ob = cloth.ob
     
     cloth.wrap_force = None
+    cloth.last_cpm = None # last closest point on mesh (for popping in and out of edit mode)
     
     if ob.data.is_editmode:
         ob.update_from_editmode()

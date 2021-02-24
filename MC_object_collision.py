@@ -136,8 +136,6 @@ def octree_one(sc, cloth):
     
     b_min = np.min(co, axis=0)
     b_max = np.max(co, axis=0)
-    
-    bpy.data.objects['ee'].location = b_max
         
     # bounds_8 is for use on the next iteration.
     mid, bounds_8 = generate_bounds(b_min, b_max)

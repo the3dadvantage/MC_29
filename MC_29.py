@@ -40,6 +40,11 @@
 # can I pre-allocate memory before fancy indexing like for tri_coors?
 #   tri_co[:] = cloth.co[tridex] ?? Would it be faster??
 
+# !!! bug where start spring length changes if cloth is
+#   turned on in edit mode and mesh is distorted. Should
+#   be getting spring lengths from source shape. Somehow not.
+#   changes were made to def measure_edges(
+
 bl_info = {
     "name": "MC_29",
     "author": "Rich Colburn, email: the3dadvantage@gmail.com",
@@ -77,9 +82,11 @@ except ImportError:
 try:
     from . import MC_self_collision
     from . import MC_object_collision
+    from . import MC_pierce
 except:
     MC_object_collision = bpy.data.texts['MC_object_collision.py'].as_module()
     MC_self_collision = bpy.data.texts['MC_self_collision.py'].as_module()
+    MC_pierce_collision = bpy.data.texts['MC_pierce.py'].as_module()
     print("Tried to import internal texts.")
 
 
@@ -95,8 +102,10 @@ MC_data['recent_object'] = None
 
 
 big_t = 0.0
-def rt_(num=None, skip=True):
-    #return
+def rt_(num=None, skip=True, show=False):
+    return
+    if not show:
+        return
     global big_t
     #if skip:
         #return
@@ -474,7 +483,7 @@ def update_v_norms(cloth):
         
     tri_co = cloth.co[cloth.tridex]
     normals = get_normals_from_tris(tri_co)
-
+    cloth.tri_normals = normals
     # now get vertex normals with add.at
     cloth.v_norms[:] = 0.0
     np.add.at(cloth.v_norms, cloth.v_norm_indexer, normals[cloth.v_norm_indexer1])
@@ -513,10 +522,10 @@ def apply_rotation(object, normals):
 # universal ---------------------
 def revert_rotation(ob, co):
     """When reverting vectors such as normals we only need
-    to rotate"""
+    to rotate. Forces need to be scaled"""
     m = np.array(ob.matrix_world)
-    mat = m[:3, :3] # rotates backwards without T
-    return co @ mat
+    mat = m[:3, :3] / np.array(ob.scale, dtype=np.float32) # rotates backwards without T
+    return (co @ mat) / np.array(ob.scale, dtype=np.float32)
 
 
 # universal ---------------------
@@ -555,6 +564,14 @@ def apply_in_place(ob, arr):
 def apply_transforms(ob, co):
     """Get vert coords in world space"""
     m = np.array(ob.matrix_world, dtype=np.float32)
+    mat = m[:3, :3].T # rotates backwards without T
+    loc = m[:3, 3]
+    return co @ mat + loc
+
+
+def invert_transforms(ob, co):
+    """Get vert coords in world space"""
+    m = np.array(ob.matrix_world.inverted(), dtype=np.float32)
     mat = m[:3, :3].T # rotates backwards without T
     loc = m[:3, 3]
     return co @ mat + loc
@@ -1407,39 +1424,32 @@ def get_cloth(ob):
 #                                                              #
 
 # precalculated ---------------
-def closest_point_mesh(obm, ob, idx, target):
-    """Uses bmesh method to get CPM"""
-    context = bpy.context
-    scene = context.scene
+def closest_point_mesh(cloth, target):
+    """Using blender built-in method"""
+    
+    note = 'can use this to do surface follow with some mods'
+    note_2 = 'currently only works with one collider'
+    
+    # get world co for cloth
+    lco = apply_transforms(cloth.ob, cloth.co)
+    
+    # apply cloth world to object local
+    ico = invert_transforms(target, lco)
+    
+    co = []
+    for c in ico:
+        hit, loc, norm, face_index = target.closest_point_on_mesh(c)
+        co += [loc]
+    
+    ap_co = apply_transforms(target, co)
+    
+    vecs = ap_co - lco
+    
+    # apply global force to cloth local
+    move = revert_rotation(cloth.ob, vecs)
 
-    obm.verts.ensure_lookup_table()
-    tmwi = target.matrix_world.inverted()
-
-    locs = []
-    faces = []
-    norms = []
-    cos = []
-    for i in idx:
-        co = ob.matrix_world @ obm.verts[i].co # global face median
-        #co = obm.verts[i].co # global face median
-        cos.append(co)
-        local_pos = tmwi @ co  # face cent in target local space
-
-        (hit, loc, norm, face_index) = target.closest_point_on_mesh(local_pos)
-        #print(hit, loc, norm, face_index)
-        if hit:
-            #locs.append(target.matrix_world @ loc)
-            locs.append(loc)
-            faces.append(face_index)
-            norms.append(norm)
-            empties = True
-            empties = False
-            if empties:
-                bpy.ops.object.empty_add(location=target.matrix_world @ loc)
-
-    print("need to create dtypes for these array below")
-    return np.array(locs), np.array(faces), np.array(norms), np.array(cos)
-
+    return move
+    
 
 def get_tridex(ob, tobm=None):
     """Return an index for viewing the verts as triangles"""
@@ -1547,7 +1557,7 @@ def create_surface_follow_data(active, cloths):
             sel_obm.free()
 
             # find barycentric data from selection mesh
-            locs, faces, norms, cos = closest_point_mesh(cloth.obm, c, idx, sel_object)
+            locs, faces, norms, cos = closest_point_mesh(cloth, c, idx, sel_object)
 
             # converts coords to dict keys so we can find corresponding verts in surface follow mesh
             idx_co_key = {}
@@ -2154,16 +2164,21 @@ def update_groups(cloth, obm=None, geometry=False):
     
 
 # update the cloth ---------------
-def measure_edges(co, idx, cloth):
+def measure_edges(co, idx, cloth, source=False):
     """Takes a set of coords and an edge idx and measures segments"""
     l = idx[:,0]
     r = idx[:,1]
+    
+    if not source:    
+        np.subtract(co[r], co[l], out=cloth.measure_cv, dtype=np.float32)
+        np.einsum("ij ,ij->i", cloth.measure_cv, cloth.measure_cv, out=cloth.measure_dot)
+        np.sqrt(cloth.measure_dot, out=cloth.measure_length)
+        return
+    
     v = co[r] - co[l]
-    #d = np.einsum("ij ,ij->i", v, v, out=cloth.measure_length)
-    np.einsum("ij ,ij->i", v, v, out=cloth.measure_dot)
-    #return v, d, np.sqrt(d)
-    np.sqrt(cloth.measure_dot, out=cloth.measure_length)
-    return v
+    d = np.einsum("ij ,ij->i", v, v)
+    le = np.sqrt(d)
+    return v, d, le
 
 
 def stretch_springs_basic(cloth, target=None): # !!! need to finish this
@@ -2178,9 +2193,8 @@ def stretch_springs_basic(cloth, target=None): # !!! need to finish this
         # need to get co with modifiers that don't affect the vertex count
         # so I could create a list of mods to turn off then use that fancy
         # thing I created for turning off modifiers in the list.
-        return measure_edges(co, cloth.basic_set, cloth)
+        return measure_edges(co, cloth.basic_set, cloth, source=True)
 
-    co = get_co_shape(cloth.ob, 'MC_source')
     # can't figure out how to update new verts to source shape key when
     #   in edit mode. Here we pull from source shape and add verts from
     #   current bmesh where there are new verts. Need to think about
@@ -2190,12 +2204,15 @@ def stretch_springs_basic(cloth, target=None): # !!! need to finish this
     #   of edit mode. If someone is working in edit mode and saves
     #   their file without switching out of edit mode I can't fix
     #   that short of writing these coords to a file.
-    if cloth.ob.data.is_editmode:
-        co = np.append(co, cloth.co[co.shape[0]:], axis=0)
-    v = measure_edges(co, cloth.basic_set, cloth)
     
+    if cloth.ob.data.is_editmode:
+        cloth.ob.update_from_editmode()
+
+    co = get_co_shape(cloth.ob, 'MC_source')
+    vdl = measure_edges(co, cloth.basic_set, cloth, source=True)
+    return vdl
     #cloth.measure_length = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32)
-    return v, np.copy(cloth.measure_dot), np.copy(cloth.measure_length)
+    #return np.copy(v), np.copy(cloth.measure_dot), np.copy(cloth.measure_length)
 
 
 def surface_forces(cloth):
@@ -2246,8 +2263,9 @@ def stretch_solve(cloth):
         #   by caching these values and running them when other updates run
         # v, d, l = stretch_springs_basic(cloth, cloth.target) # from target or source key
     
-    # (current vec, dot, length)
-    cv = measure_edges(cloth.co, cloth.basic_set, cloth) # from current cloth state
+    measure_edges(cloth.co, cloth.basic_set, cloth) # from current cloth state
+    #cv, cd, cl = measure_edges(cloth.co, cloth.basic_set, cloth, source=True) # from current cloth state
+    cv = cloth.measure_cv
     cd = cloth.measure_dot
     cl = cloth.measure_length
 
@@ -2353,9 +2371,67 @@ def inflate_and_wind(cloth):
         np.add.at(cloth.velocity, cloth.tridex, move[:, None])
         
         cloth.turb_count += 1
+
+
+def wrap_force_cpm(cloth):
+    
+    print('cpm stands for closest point on mesh')
+    # the theory is to get closest point
+    # on mesh for each vertex and use that
+    # as a direction for a force to move it
+    # towards the body.
+    
+def resolve_self_collisions(cloth):
+    
+    # find where edges pass through tris?
+    # do like a flood fill around the point
+    # to get connected points.
+    # Do like a flood fill around the tris to
+    # get connected tris
+    pass
+    
+    
+def basic_flatten_bend(cloth):
+    # wouldn't work with folds...
+    # find surrounding points and make a triangle.
+    # move the point along the normal of that
+    #   triangle towards it's surface.
+    # could exclude the fold edges...
+    # could use this for something like
+    # a pre-solve fit. Pull the panels
+    # towards each other and towards the body...
+    pass
+
+def divide_layers_and_object_collide():
+    # object collide is more sure because
+    # it doesn't have instabilities like sc
+    # could divide the garment panels
+    # and treat them as separate objects 
+    # Would have to be a heirarchy.
+    # cant figure out what order to do
+    # the heirarcy. Inner layer colliding
+    # with avatar would have to be master.
+    pass
+
+
+def edge_edge_spencer_model(coth):
+    for e in boundary_edges:
+        # if e1v and e2v are on opposite
+        # sides of a boundary tri the edge is probably
+        # slid past a boundary edge
+        pass
     
 
 def wrap_force(cloth, avatar, frame=0):
+    
+    move = closest_point_mesh(cloth, avatar)
+    
+    cloth.co += move * cloth.ob.MC_props.wrap_force
+    #cloth.wrap_force = co - cloth.co
+    
+    #np.array(locs), np.array(faces), np.array(norms), np.array(cos)
+    return    
+    
     ob = cloth.ob
     m = ob.modifiers.new('MCWF', "SHRINKWRAP")
     m.target = avatar
@@ -2466,7 +2542,16 @@ def best_sim(cloth, avatar):
     print("=========================")
     print(cloth.iterator, "iteration")
     print("=========================")
+
+
+def pierce_collide(cloth):
+    """Where edges pierce faces"""
     
+    if not cloth.ob.MC_props.self_collide:
+        update_v_norms(cloth) # because self collide runs it
+    cloth.pierce_co = cloth.co[cloth.eidx]
+    MC_pierce_collision.detect_collisions(cloth)
+
 
 def ob_collide(cloth):
 
@@ -2569,7 +2654,11 @@ def spring_basic_no_sw(cloth):
 
     inflate_and_wind(cloth)
     
-    cloth.velocity[:,2] += cloth.ob.MC_props.gravity * 0.001
+    grav = np.array([0.0, 0.0, cloth.ob.MC_props.gravity * 0.001])
+    w_grav = revert_rotation(cloth.ob, [grav])
+    
+    #cloth.velocity[:, 2] += cloth.ob.MC_props.gravity * 0.001
+    cloth.velocity += w_grav
     cloth.co += cloth.velocity
     
     cloth.vel_zero[:] = cloth.co
@@ -2585,7 +2674,8 @@ def spring_basic_no_sw(cloth):
                 if i > 0:
                     update_pins_select_sew_surface(cloth)
     
-    rt_('bend spring time')
+    #rt_('bend spring time', skip=False, show=True)
+    rt_('', skip=False, show=True)
     if cloth.ob.MC_props.stretch > 0:
         cloth.feedback[:] = cloth.co
         for i in range(cloth.ob.MC_props.stretch_iters):
@@ -2596,6 +2686,7 @@ def spring_basic_no_sw(cloth):
         spring_move = cloth.co - cloth.feedback
         cloth.velocity += spring_move * feedback_val
     
+    rt_(num='stretch time', skip=False, show=True)
     # sewing -------------------
     #sew_force(cloth) # no iterate so no: update_pins_and_select(cloth)
     # sewing -------------------
@@ -2605,7 +2696,6 @@ def spring_basic_no_sw(cloth):
     # surface ------------------
     
     #v_move = cloth.co - cloth.vel_zero
-    rt_(num='stretch time')
     
     if cloth.ob.MC_props.detect_collisions:
         ob_collide(cloth)
@@ -2630,6 +2720,9 @@ def spring_basic_no_sw(cloth):
                     #sew_force(cloth)
         rt_(num='extra_bend', skip=False)
     #rt_(num='bend springs sw')
+    
+    if cloth.ob.MC_props.detangle: # cloth.ob.MC_props.pierce_collide:
+        pierce_collide(cloth)
     
     if cloth.ob.MC_props.wrap_force != 0:
         if cloth.wrap_force is not None:    
@@ -2973,6 +3066,7 @@ def refresh(cloth, skip=False):
     cloth.total_tridex = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32) # for calculating the weights of the mean
     cloth.measure_dot = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32) # for calculating the weights of the mean
     cloth.measure_length = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32) # for calculating the weights of the mean
+    cloth.measure_cv = np.zeros((cloth.basic_v_fancy.shape[0], 3), dtype=np.float32) # for calculating the weights of the mean
     
     if not skip:    
         cloth.vdl = stretch_springs_basic(cloth, cloth.target)
@@ -2984,8 +3078,8 @@ def refresh(cloth, skip=False):
 
         # for offset_cloth_tris:
         cloth.v_norms = np.empty((cloth.co.shape[0], 3), dtype=np.float32)
-        cloth.v_norm_indexer1 = np.hstack([[f.index for f in v.link_faces] for v in triobm.verts])
-        cloth.v_norm_indexer = np.hstack([[v.index] * len(v.link_faces) for v in triobm.verts])
+        cloth.v_norm_indexer1 = np.array(np.hstack([[f.index for f in v.link_faces] for v in triobm.verts]), dtype=np.int32)
+        cloth.v_norm_indexer = np.array(np.hstack([[v.index] * len(v.link_faces) for v in triobm.verts]), dtype=np.int32)
         # ---------------------        
     
     cloth.turbulence = np.random.rand(cloth.tridex.shape[0])
@@ -3001,6 +3095,36 @@ def refresh(cloth, skip=False):
     cloth.tris_six = np.empty((cloth.tridex.shape[0], 6, 3), dtype=np.float32)
     cloth.sc_co = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
 
+    # pierce data
+    if not skip:
+        cloth.eidx = get_sc_edges(ob)
+        
+        cloth.pierce_co = np.empty((cloth.eidx.shape[0], 2, 3), dtype=np.float32)
+        #cloth.pierce_co2 = np.empty((cloth.eidx.shape[0] * 2, 3), dtype=np.float32)
+        
+        c = cloth.eidx.shape[0]
+        cloth.pc_edges = np.empty((c, 2), dtype=np.int32)
+        idx = np.arange(c * 2, dtype=np.int32)
+        cloth.pc_edges[:, 0] = idx[:c]
+        cloth.pc_edges[:, 1] = idx[c:]
+        cloth.peidx = np.arange(cloth.eidx.shape[0])
+        
+        # boundary edgs:
+        cloth.boundary_bool = np.array([[e.is_boundary for e in t.edges] for t in cloth.triobm.faces], dtype=np.bool)
+        cloth.boundary_tris = np.array([np.any(b) for b in cloth.boundary_bool], dtype=np.bool)
+        cloth.bt_edges = np.array([[[e.verts[0].index, e.verts[1].index] for e in t.edges] for t in cloth.triobm.faces], dtype=np.int32)
+        #cloth.bt_edges
+        #print(cloth.bt_edges)
+        
+        # I hate it when this happens:
+        # cloth.bt_edges[cloth.boundary_tris][ וַעֲוֺנֹתָם הוּא יִסְבֹּֽל]
+        # Hebrew does not index numpy arrays (copy and paste while mixing Hebrew study and python...)
+        # print(cloth.bt_edges[cloth.boundary_tris][cloth.boundary_bool[cloth.boundary_tris]])
+        
+
+        
+        
+        
     # for that p1 experiment thingy with boundary edge to object collisions
     for i, j in enumerate(cloth.obm.verts):
         if j.is_boundary:
@@ -3587,6 +3711,9 @@ class McPropsObject(bpy.types.PropertyGroup):
     self_collide_margin:\
     bpy.props.FloatProperty(name="Self Collision Margin", description="Self collision margin", default=0.02, min=0, precision=3)
 
+    detangle:\
+    bpy.props.BoolProperty(name="Detangle Self Collision", description="Work Out Failed Self collisions (Hopefully fixing self collide failures. Fingers crossed.)", default=False)
+
     new_self_margin:\
     bpy.props.FloatProperty(name="New Self Margin", description="New Self collision margin", default=0.02, min=0, precision=3)
     
@@ -3857,7 +3984,7 @@ class MCResetToBasisShape(bpy.types.Operator):
         cloth = get_cloth(ob)
         if ob.data.is_editmode:
             cloth.obm = bmesh.from_edit_mesh(ob.data)
-
+            ob.update_from_editmode()
             Basis = cloth.obm.verts.layers.shape["Basis"]
             for v in cloth.obm.verts:
                 v.co = v[Basis]
@@ -4303,6 +4430,15 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
             # use current mesh or most recent cloth object if current ob isn't mesh
 
             # if we select a new mesh object we want it to display
+
+            col.prop(ob.MC_props, "detangle", text="Detangle", icon='GRAPH')
+            if False: # detanlge options    
+                if ob.MC_props.detangle:
+                    row = col.row()
+                    #col = layout.column(align=True)
+                    row.scale_y = 0.75
+                    row.label(icon='PROP_CON')
+                    row.prop(ob.MC_props, "self_collide_margin", text="SC Margin", icon='PROP_CON')
 
         col = layout.column(align=True)
         col.scale_y = 1.5

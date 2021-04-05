@@ -82,10 +82,15 @@ try:
     from . import MC_self_collision
     from . import MC_object_collision
     from . import MC_pierce
+    from . import MC_edge_collide
+    from . import MC_grid
+    
 except:
     MC_object_collision = bpy.data.texts['MC_object_collision.py'].as_module()
     MC_self_collision = bpy.data.texts['MC_self_collision.py'].as_module()
     MC_pierce = bpy.data.texts['MC_pierce.py'].as_module()
+    MC_edge_collide = bpy.data.texts['MC_edge_collide.py'].as_module()
+    MC_grid = bpy.data.texts['MC_grid.py'].as_module()
     print("Tried to import internal texts.")
 
 
@@ -102,9 +107,9 @@ MC_data['recent_object'] = None
 
 big_t = 0.0
 def rt_(num=None, skip=True, show=False):
-    return
-    if not show:
-        return
+    #return
+    #if not show:
+    #   return
     global big_t
     #if skip:
         #return
@@ -660,13 +665,25 @@ def offset_face_indices(faces=[]):
 
 
 # universal ---------------
-def link_mesh(verts, edges, faces, name='name'):
-    """Generate and link a new object from pydata"""
+def link_mesh(verts, edges, faces, name='name', ob=None):
+    """Generate and link a new object from pydata.
+    If object already exists replace its data
+    with a new mesh and delete the old mesh."""
+    if ob is None:
+        mesh = bpy.data.meshes.new(name)
+        mesh.from_pydata(verts, edges, faces)
+        mesh.update()
+        mesh_ob = bpy.data.objects.new(name, mesh)
+        bpy.context.collection.objects.link(mesh_ob)
+        return mesh_ob
+    
+    mesh_ob = ob
+    old = ob.data
     mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(verts, edges, faces)
     mesh.update()
-    mesh_ob = bpy.data.objects.new(name, mesh)
-    bpy.context.collection.objects.link(mesh_ob)
+    mesh_ob.data = mesh
+    bpy.data.meshes.remove(old)
     return mesh_ob
 
 
@@ -2538,19 +2555,23 @@ def best_sim(cloth, avatar):
     if cloth.iterator == 0:
         cloth.sim_start_time = time.time()
         cloth.ob.MC_props.extra_bend_iters = 1
-        cloth.ob.MC_props.velocity = 0.95
-        cloth.ob.MC_props.sew_force = 0.001
-        cloth.ob.MC_props.shrink_grow = 1.0
+        cloth.ob.MC_props.velocity = 0.8
+        cloth.ob.MC_props.sew_force = 0.08
+        #cloth.ob.MC_props.shrink_grow = 1.0
+        cloth.ob.MC_props.shrink_grow = .7
         cloth.ob.MC_props.gravity = -1.0
-        cloth.ob.MC_props.wrap_force = 0.0
+        cloth.ob.MC_props.wrap_force = 0.03
         cloth.ob.MC_props.self_collide_force = 0.5
 
     if cloth.iterator == 20:
-        cloth.ob.MC_props.sew_force = .001
+        cloth.ob.MC_props.sew_force = .1
+        note = 'now start dropping the arms'
+        print(note)
+    
     if cloth.iterator == 40:
-        cloth.ob.MC_props.sew_force = .002
+        cloth.ob.MC_props.sew_force = .1
     if cloth.iterator == 60:
-        cloth.ob.MC_props.sew_force = .005
+        cloth.ob.MC_props.sew_force = .1
     if cloth.iterator == 80:
         cloth.ob.MC_props.sew_force = .1
         cloth.ob.MC_props.shrink_grow = .7
@@ -2585,7 +2606,8 @@ def best_sim(cloth, avatar):
     
     if cloth.iterator == 191:
         cloth.velocity[:] = 0.0
-    
+        cloth.ob.MC_props.wrap_force = 0.0
+        
     if cloth.iterator > 190:
         if cloth.ob.MC_props.shrink_grow < 1:
             cloth.ob.MC_props.shrink_grow += 0.01
@@ -2607,6 +2629,13 @@ def best_sim(cloth, avatar):
     print(cloth.iterator, "iteration")
     print("=========================")
 
+
+def edge_collide(cloth):
+    update_pins_select_sew_surface(cloth)
+    cloth.four_edge_co[:, :2] = cloth.select_start[cloth.eidx]
+    cloth.four_edge_co[:, 2:] = cloth.co[cloth.eidx]
+    MC_edge_collide.detect_collisions(cloth)
+    
 
 def pierce_collide(cloth):
     """Where edges pierce faces"""
@@ -2791,6 +2820,9 @@ def spring_basic_no_sw(cloth):
     if cloth.ob.MC_props.detangle: # cloth.ob.MC_props.pierce_collide:
         pierce_collide(cloth)
     
+    if cloth.ob.MC_props.edge_collide:    
+        edge_collide(cloth)
+    
     #if cloth.ob.MC_props.wrap_force != 0:
         #if cloth.wrap_force is not None:    
             #cloth.co += cloth.wrap_force * cloth.ob.MC_props.wrap_force
@@ -2809,6 +2841,9 @@ def spring_basic_no_sw(cloth):
     np.einsum('ij,ij->i', cloth.velocity, cloth.velocity, out=cloth.move_dist)
     # keep this !!!
     
+    #cloth.co[cloth.selected] = cloth.select_start[cloth.selected]
+    #print("remember this is disable in update_pins...")
+
     """
     The mass vertex group for velocity would be simple.
     Velocity gets multiplied by the vertex weight.
@@ -3166,7 +3201,7 @@ def refresh(cloth, skip=False):
     # pierce data
     if not skip:
         cloth.eidx = get_sc_edges(ob)
-        
+        cloth.four_edge_co = np.empty((cloth.eidx.shape[0], 4, 3), dtype=np.float32)
         cloth.pierce_co = np.empty((cloth.eidx.shape[0], 2, 3), dtype=np.float32)
         #cloth.pierce_co2 = np.empty((cloth.eidx.shape[0] * 2, 3), dtype=np.float32)
         
@@ -3748,6 +3783,42 @@ def cb_duplicator(self, context):
     bpy.app.timers.unregister(duplication_and_load)
     print("unloaded dup/load timer")
 
+
+def cb_grid(self, context):
+
+    ob = bpy.context.object
+    if ob == None:
+        return
+    if not ob.type == "MESH":
+        return
+
+    border = MC_grid.Border(ob)
+    return
+    #new = border.redistributed
+    #new = MC_grid.redistribute(border.ordered_co[:, :2], grid_size=size, angle=angle)
+    new = border.new_border
+    new_ed = border.new_border_edges.tolist()
+    mob = None
+    if name in bpy.data.objects:
+        mob = bpy.data.objects[name]
+        
+    grid = link_mesh(verts=new.tolist(), edges=new_ed, faces=[], name=name, ob=mob)
+    grid2 = link_mesh(verts=border.grid_co.tolist(), edges=border.grid_edges, faces=[], name=name, ob=mob)
+    #grid2 = link_mesh(verts=border.grid.tolist(), edges=[], faces=[], name=name, ob=mob)
+    grid.matrix_world = ob.matrix_world
+    grid2.matrix_world = ob.matrix_world
+    
+
+
+#    need to return sharps so we can 
+#       keep them
+#    Need to consider points that land
+#       on edges when checking intersect    
+#    Mybe subdivide boundary edges where the 
+#       edges are too long because of their angle
+#       to the grid.
+    
+
 # ^                                                          ^ #
 # ^                 END callback functions                   ^ #
 # ============================================================ #
@@ -3779,8 +3850,14 @@ class McPropsObject(bpy.types.PropertyGroup):
     self_collide_margin:\
     bpy.props.FloatProperty(name="Self Collision Margin", description="Self collision margin", default=0.02, min=0, precision=3)
 
+    min_max_margin:\
+    bpy.props.FloatProperty(name="Min Max Margin", description="Experimenting with min max values in collisions", default=0.0, min=0, precision=3)
+
     detangle:\
     bpy.props.BoolProperty(name="Detangle Self Collision", description="Work Out Failed Self collisions (Hopefully fixing self collide failures. Fingers crossed.)", default=False)
+
+    edge_collide:\
+    bpy.props.BoolProperty(name="Edge Collide", description="edges collide against each other in self collisions", default=False)
 
     new_self_margin:\
     bpy.props.FloatProperty(name="New Self Margin", description="New Self collision margin", default=0.02, min=0, precision=3)
@@ -3996,6 +4073,37 @@ class McPropsObject(bpy.types.PropertyGroup):
         description="add force to vertex normals", 
         default=0, precision=4)
 
+    # Grid tools ------->>>
+    grid_angle_limit:\
+    bpy.props.FloatProperty(name="Grid Angle Limit", 
+        description="Preserve points with angles sharper than this", 
+        default=20, soft_min=0, soft_max=180, precision=1, update=cb_grid)
+    
+    grid_size:\
+    bpy.props.FloatProperty(name="Grid Size", 
+        description="spacing of points in grid", 
+        default=0.1, soft_min=0.01, precision=3, update=cb_grid)    
+
+    grid_triangles:\
+    bpy.props.BoolProperty(name="Grid Triangles", 
+        description="Use Triangles", 
+        default=True, update=cb_grid)
+
+    grid_merge_dist:\
+    bpy.props.FloatProperty(name="Edge Search Dist", 
+        description="How far to look for edges when filling border.", 
+        default=1.1, soft_min=0.5, soft_max=2, precision=3, update=cb_grid)    
+        
+    grid_smoothing:\
+    bpy.props.IntProperty(name="Inner Smoothing", 
+        description="Smooth the layout of the grid after filling border.", 
+        default=10, soft_min=3, soft_max=50, update=cb_grid)
+        
+    grid_debug_idx:\
+    bpy.props.IntProperty(name="debug", 
+        description="for debug", 
+        default=0, update=cb_grid)    
+        
 
 # create properties ----------------
 # scene:
@@ -4099,6 +4207,16 @@ class MCResetSelectedToBasisShape(bpy.types.Operator):
         ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set('co', bco.ravel())
         ob.data.update()
 
+        return {'FINISHED'}
+
+
+class GridFromPolyline(bpy.types.Operator):
+    """Generate a grid inside a polyline"""
+    bl_idname = "object.grid_from_polyline"
+    bl_label = "MC Grid From Polyline"
+    bl_options = {'REGISTER', 'UNDO'}
+    def execute(self, context):
+        cb_grid(self, context)
         return {'FINISHED'}
     
 
@@ -4500,6 +4618,7 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
             # if we select a new mesh object we want it to display
 
             col.prop(ob.MC_props, "detangle", text="Detangle", icon='GRAPH')
+            col.prop(ob.MC_props, "edge_collide", text="Eadge Collide", icon='NORMALS_VERTEX_FACE')
             if False: # detanlge options    
                 if ob.MC_props.detangle:
                     row = col.row()
@@ -4784,6 +4903,35 @@ class PANEL_PT_modelingClothVertexGroups(PANEL_PT_MC_Master, bpy.types.Panel):
             col.prop(ob.MC_props, "vg_surface_follow", text="Surface Follow")
 
 
+class PANEL_PT_modelingClothGridTools(PANEL_PT_MC_Master, bpy.types.Panel):
+    """Modeling Cloth Grid Tools"""
+    bl_label = "MC Grid Tools"
+    bl_idname = "PANEL_PT_modeling_cloth_grid_tools"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Extended Tools"
+    
+    def draw(self, context):
+        ob = self.ob
+        if bpy.context.object is None:
+            return
+        if bpy.context.object.type != 'MESH':
+            return    
+        sc = bpy.context.scene
+        layout = self.layout
+
+        col = layout.column(align=True)
+        col.scale_y = 1
+        col.label(text='Grid Tools')
+        col.operator('object.grid_from_polyline', text="Fill Polyline", icon='MESH_GRID')
+        col.prop(ob.MC_props, "grid_angle_limit", text="Angle Limit")
+        col.prop(ob.MC_props, "grid_size", text="Size")
+        col.prop(ob.MC_props, "grid_merge_dist", text="Merge Dist")
+        col.prop(ob.MC_props, "grid_smoothing", text="Smooth Iters")
+        col.prop(ob.MC_props, "grid_debug_idx", text="debug")
+        col.prop(ob.MC_props, "grid_triangles", text="Triangles")
+
+
 # EDIT MODE PANEL
 class PANEL_PT_modelingClothPreferences(bpy.types.Panel):
     """Modeling Cloth Preferences"""
@@ -4880,6 +5028,7 @@ classes = (
     MCSewToSurface,
     MCCreateVirtualSprings,
     MCDeleteCache,
+    GridFromPolyline,
     MCCreateMeshKeyframe,
     MCRemoveMeshKeyframe,
     PANEL_PT_modelingClothMain,
@@ -4887,6 +5036,7 @@ classes = (
     PANEL_PT_modelingClothSettings,
     PANEL_PT_modelingClothSewing,
     PANEL_PT_modelingClothVertexGroups,
+    PANEL_PT_modelingClothGridTools,
     PANEL_PT_modelingClothPreferences,
     MCVertexGroupPin,
     PinSelected,

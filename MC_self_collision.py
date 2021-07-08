@@ -1,8 +1,12 @@
-import bpy
-import numpy as np
-import bmesh
-import time
 
+try:
+    import bpy
+    import bmesh
+    import numpy as np
+    import time
+
+except ImportError:
+    pass
 
 big_t = 0.0
 def rt_(num=None):
@@ -37,7 +41,7 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs): # could plug thes
 
     w = 1 - (u+v)
     # !!!! needs some thought
-    margin = 0.0
+    margin = -0.0
     # !!!! ==================
     weights = np.array([w, u, v]).T
     check = (u >= margin) & (v >= margin) & (w >= margin)
@@ -288,16 +292,17 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
     ty = sc.tris[:, :, 1]
     tz = sc.tris[:, :, 2]
 
+    margin = cloth.ob.MC_props.min_max_margin
     margin = 0.0
     
-    txmax = np.max(tx, axis=1)# + margin
-    txmin = np.min(tx, axis=1)# - margin
+    txmax = np.max(tx, axis=1) + margin
+    txmin = np.min(tx, axis=1) - margin
 
-    tymax = np.max(ty, axis=1)# + margin
-    tymin = np.min(ty, axis=1)# - margin
+    tymax = np.max(ty, axis=1) + margin
+    tymin = np.min(ty, axis=1) - margin
 
-    tzmax = np.max(tz, axis=1)# + margin
-    tzmin = np.min(tz, axis=1)# - margin
+    tzmax = np.max(tz, axis=1) + margin
+    tzmin = np.min(tz, axis=1) - margin
 
     sc.txmax = txmax
     sc.txmin = txmin
@@ -313,13 +318,13 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
     ey = sc.edges[:, :, 1]
     ez = sc.edges[:, :, 2]
 
-    sc.exmin = np.min(ex, axis=1)
-    sc.eymin = np.min(ey, axis=1)
-    sc.ezmin = np.min(ez, axis=1)
+    sc.exmin = np.min(ex, axis=1) - margin
+    sc.eymin = np.min(ey, axis=1) - margin
+    sc.ezmin = np.min(ez, axis=1) - margin
     
-    sc.exmax = np.max(ex, axis=1)
-    sc.eymax = np.max(ey, axis=1)
-    sc.ezmax = np.max(ez, axis=1)
+    sc.exmax = np.max(ex, axis=1) + margin
+    sc.eymax = np.max(ey, axis=1) + margin
+    sc.ezmax = np.max(ez, axis=1) + margin
     
     tfull, efull, bounds = octree_et(sc, margin=0.0, cloth=cloth)
 
@@ -409,7 +414,7 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
             sc.trs += rt.tolist()
     
 
-def ray_check_oc(sc, ed, trs, cloth):
+def ray_check_oc(sc, ed, trs, cloth, sort_only=False):
     
     """Need to fix selected points by removing them
     from the weights. (For working in edit mode)
@@ -418,7 +423,11 @@ def ray_check_oc(sc, ed, trs, cloth):
     
     eidx = np.array(ed, dtype=np.int32)
     tidx = np.array(trs, dtype=np.int32)
-
+    if sort_only:
+        cloth.oct_tris = tidx
+        cloth.oct_points = eidx
+        return
+    
     # undo the offset:
     sc.tris[:, :3] = cloth.select_start[cloth.tridex]# - shift)[cloth.tridex]
     sc.tris[:, 3:] = cloth.co[cloth.tridex]# + shift)[cloth.tridex]
@@ -448,7 +457,18 @@ def ray_check_oc(sc, ed, trs, cloth):
 
     vecs = co - ori
     dots = np.einsum('ij,ij->i', vecs, un)
-
+    
+    # new ================================
+    new = False
+    #new = True
+    if new:    
+        switch = np.sign(dots * start_dots)
+        in_margin = (abs_dots <= M) | (switch <= 0.0)
+        start_check, start_weights_1 = inside_triangles(t[:, :3][in_margin], start_co[in_margin], margin= 0.0)        
+        
+    
+    
+        return
     switch = np.sign(dots * start_dots)
     direction = np.sign(dots)
     abs_dots = np.abs(dots)
@@ -460,7 +480,7 @@ def ray_check_oc(sc, ed, trs, cloth):
     check_1, weights = inside_triangles(t[:, 3:][in_margin], co[in_margin], margin= -0.1)
     start_check, start_weights_1 = inside_triangles(t[:, :3][in_margin], start_co[in_margin], margin= 0.0)
 
-    check = check_1# | start_check
+    check = check_1 | start_check
     #check = check_1 | start_check
     #check[:] = True
     start_weights = start_weights_1[check]
@@ -468,7 +488,30 @@ def ray_check_oc(sc, ed, trs, cloth):
     weight_plot = t[:, 3:][in_margin][check] * start_weights[:, :, None]
 
     loc = np.sum(weight_plot, axis=1) + ((un[in_margin][check] * M) * direction[in_margin][check][:, None])
+        
+    move = False
+    move = True
+    if move:    
+        co_idx = eidx[in_margin][check]
+        dif = (loc - cloth.co[co_idx])
+        uni, inv, counts = np.unique(co_idx, return_inverse=True, return_counts=True)
+        ntn = np.nan_to_num(dif / counts[inv][:, None])
+        #ntn = np.nan_to_num(dif)# / counts[inv][:, None])
+        scf = cloth.ob.MC_props.self_collide_force
+        np.add.at(cloth.co, co_idx, ntn * scf)
+        #np.subtract.at(cloth.velocity, co_idx, ntn * scf)
+        #tp = cloth.tridex[tidx[in_margin][check]].ravel()
+        #tri_travel = np.repeat(-ntn, 3, axis=0)
+        #np.add.at(cloth.co, tp, tri_travel * 0.1)
+        
+        fr = cloth.ob.MC_props.sc_friction
+        if fr > 0:
+            cloth.velocity[co_idx] *= (1 - fr)        
+        
+        #cloth.velocity[co_idx] *= 0
+        #np.subtract.at(cloth.velocity, co_idx, ntn)
     
+        return
     co_idx = eidx[in_margin][check]
 
     travel = -(u_start_norms[in_margin][check] * dots[in_margin][check][:, None]) + ((u_start_norms[in_margin][check] * M) * direction[in_margin][check][:, None])
@@ -499,7 +542,10 @@ def ray_check_oc(sc, ed, trs, cloth):
         joined_travel *= (weights[:, None] * scf)
 
         ntn = np.nan_to_num(joined_travel)
+
         np.add.at(cloth.co, joined, ntn)
+        #cloth.velocity[joined] *= 0
+        #np.add.at(cloth.velocity, joined, -ntn)# * -0.5)
 
         fr = cloth.ob.MC_props.sc_friction
         if fr > 0:
@@ -548,20 +594,8 @@ class SelfCollide():
         self.ees = []
         
 
-def detect_collisions(cloth):
+def detect_collisions(cloth, sort_only=False):
     
     sc = SelfCollide(cloth)
     self_collisions_7(sc, sc.M, cloth)
-    ray_check_oc(sc, sc.ees, sc.trs, cloth)
-
-
-def register():
-    pass
-
-
-def unregister():
-    pass
-
-
-if __name__ == "__main__":
-    register()
+    ray_check_oc(sc, sc.ees, sc.trs, cloth, sort_only=sort_only)

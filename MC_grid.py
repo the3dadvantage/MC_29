@@ -1,10 +1,12 @@
-import numpy as np
 
 try:
+    import numpy as np
     import bpy
     import bmesh
+
 except ImportError:
-    print('import fail in grid. Who cares right?')
+    pass
+    #print('import fail in grid. Who cares right?')
 
 
 # universal ----------------------------------
@@ -61,46 +63,28 @@ def measure_angle_at_each_vert(grid):
     
     grid.sharp_normals = np.sign((crosses[sharps][:, 2]))
 
-    sharps[0] = True
-    
+    if np.sum(sharps) == 0:    
+        sharps[0] = True
+
     return np.arange(co.shape[0])[sharps]
 
 
 def get_segments(grid):
-    """Generate a list of segments between sharp edges"""
+    """Generate a list of segments
+    between sharp edges"""
     sharps = grid.sharps
-    
-    # in case there are no sharps    
-    if len(sharps) == 0:
-        sharps = np.array([0])
-
+    segs2 = []
+    idx = np.arange(grid.co.shape[0])
     sharp = sharps[0]
-    v = sharp
-    other_verts2 = np.array([sharp + 1, sharp -1])
-    move2 = other_verts2[0]
 
-    seg = [sharp]
-    segs = []
     for i in range(len(sharps)):
-        while True:    
-            if move2 in sharps:
-                seg.append(move2)
-                segs.append(seg)
-                seg = []
-            
-            seg.append(move2)
-            other_verts2 = np.array([move2 + 1, move2 - 1])
-            new = other_verts2[other_verts2 != sharp][0]
-            v = move2
-            move2 = new
-            
-            if move2 > (grid.co.shape[0] -1):
-                offset = move2 - grid.co.shape[0]
-                move2 = offset
-                seg.append(move2)
-                segs.append(seg)
-                return segs
-
+        if sharps[i] == sharps[-1]:
+            final = idx[sharps[i]:].tolist() + idx[:sharps[0] + 1].tolist()
+            segs2 += [final]
+            return segs2
+        
+        segs2 += [idx[sharps[i]: sharps[i + 1] + 1].tolist()]
+    
 
 def get_seg_length(grid, seg):
     """returns the total length of a set
@@ -114,7 +98,7 @@ def get_seg_length(grid, seg):
     return total_length
 
 
-def generate_perimeter(grid, current):
+def generate_perimeter(grid):
     """Place points around perimeter"""
 
     # get the length of each segments
@@ -125,8 +109,21 @@ def generate_perimeter(grid, current):
     
     # add the first point in the segment (second one gets added next time)   
     seg_sets = np.empty((0,3), dtype=np.float32)
-    seg_sets = move_point_on_path(grid, current, seg_sets)
+    iters = len(grid.segments)
+    
+    if grid.v_border:
+        grid.sew_edgesss = []
+    print()
+    print()
+    print()
+    print("----------------- new start -----------------")
+    
+    for i in range(iters):    
+        seg_sets = move_point_on_path(grid, i, seg_sets)
 
+    if grid.v_border:
+        deselect(grid.new_ob, sel=grid.sew_edgesss, type='edge')
+        
     return seg_sets
     
 
@@ -134,6 +131,21 @@ def move_point_on_path(grid, idx, seg_sets):
     """Walk the points until we are at the distance
     we space them"""
     
+    if grid.v_border:
+        obm = grid.new_obm
+        
+        #I think I''m finally ready to start work for today
+        
+        # the dictionary that contains all the sew data stuffingtons
+        
+        '''
+        grid.sew_relationships
+        so we have to check for grid.v_border and if thats true
+        we have to track what bmesh edge we''re on and find
+        the sew verts and what other edge they connect to.
+        '''
+
+        
     co = grid.co
     seg = grid.segments[idx]
     lengths = grid.seg_lengths[idx]
@@ -142,6 +154,25 @@ def move_point_on_path(grid, idx, seg_sets):
     count = grid.point_counts[idx]
 
     seg_co_set = [co[seg[0]]] # the last one will be filled in by the first one next time.
+    
+    if grid.v_border:    
+        grid.accumulated_border_count += 1
+
+        sharp_vert = grid.v_loop[seg[0]]
+        grid.sew_relationships['no_fold_verts'] += [sharp_vert]
+        
+        s_vert = obm.verts[sharp_vert]
+        three_verts = [e.other_vert(s_vert).index for e in s_vert.link_edges if len(e.link_faces) == 1]
+
+        if True:
+            five_verts = [[e.other_vert(obm.verts[v]).index for e in obm.verts[v].link_edges if len(e.link_faces) == 1] for v in three_verts]
+            
+            for e in five_verts:
+                three_verts += e
+            
+        three_verts += [sharp_vert]        
+        grid.sew_relationships['three_verts'] += [three_verts]        
+
     if count == 0:
         return seg_co_set
 
@@ -150,23 +181,78 @@ def move_point_on_path(grid, idx, seg_sets):
     build = spacing
     
     counter = 0
-    for x in range(int(count) - 1):    
+    for x in range(int(count) - 1):
         growing_length = 0
         len_idx = 0
         counter += 1
         while growing_length < spacing:
-            growing_length += lengths[len_idx]
-            len_idx += 1    
+            growing_length += lengths[len_idx]            
+            len_idx += 1
+        
+        if grid.v_border:
             
+            #print(grid.v_loop[seg[len_idx]], "len idx")
+            
+            # a_vert represents a vert in the new object that is prior
+            # to the location of a new vert added to the redistribute border
+            # the redistribute border is currently just zero through N
+            # I have to find a way to correlate the new grid to the
+            # sew edges in the flapless object. AHHHH!!!!!
+             
+            
+            # so in the friggin border on the new grid... This is making my head hurt
+            # I need lots of sleep to be able to make sense of this crap
+            
+            
+            a_vert = grid.v_loop[seg[len_idx]]
+            vert = obm.verts[a_vert]
+
+            le = [e.index for e in vert.link_edges if len(e.link_faces) == 0]
+            lv = [e.other_vert(vert).index for e in vert.link_edges if len(e.link_faces) == 0]
+            
+            #print(le, "this is le")
+
+            grid.accumulated_border_count += 1
+            
+            
+            #so now I have the vert in the other panel on the no fold
+            #I also have the vert in the new grid border.
+            
+            current_border_vert = grid.accumulated_border_count
+            for v in lv:
+                if v in grid.sew_relationships:
+                    grid.new_sew_edges += [[grid.sew_relationships[v], current_border_vert]]                
+                
+            #grid.sew_relationships['border_verts'] += [current_border_vert]
+            three_verts = [e.other_vert(vert).index for e in vert.link_edges if len(e.link_faces) == 1]
+                
+            if True:    
+                five_verts = [[e.other_vert(obm.verts[v]).index for e in obm.verts[v].link_edges if len(e.link_faces) == 1] for v in three_verts]
+                for e in five_verts:
+                    three_verts += e            
+            
+            three_verts += [a_vert]
+            
+            grid.sew_relationships['no_fold_verts'] += [a_vert]
+            grid.sew_relationships['three_verts'] += [three_verts]
+            grid.sew_relationships[a_vert] = current_border_vert    
+            
+            # --------------------------------------------------------------------
+            #so there is this vert. it''s either before or after the border vert
+            #on the new border. so where are the new border verts here?
+            
+            # --------------------------------------------------------------------
+            
+
         # back up to the last point now 
         len_idx -= 1
-        growing_length -= lengths[len_idx] 
-        point = co[len_idx]
+        growing_length -= lengths[len_idx]
+
         
         # move from the past point along the last vector until we
         # hit the proper spacing
-        end_offset = spacing - growing_length 
-        last_dif = lengths[len_idx] # !!!!!!!!!!!!!!!!!!!!!!!!!!!!  
+        end_offset = spacing - growing_length
+        last_dif = lengths[len_idx] # !!!!!!!!!!!!!!!!!!!!!!!!!!!!
         along_last = end_offset / last_dif
         
         move = vecs[len_idx]
@@ -174,7 +260,13 @@ def move_point_on_path(grid, idx, seg_sets):
         loc = co[seg[len_idx]] + move * along_last
         
         seg_co_set.append(loc)
+
         
+        
+        
+        
+        
+
         # start from the beginning because it's easier
         spacing += build
     
@@ -195,11 +287,28 @@ class Distribute:
     pass
     
 
-def redistribute(cut_polyline, grid_size=4.0, angle=20):
+def redistribute(cut_polyline, grid_size=4.0, angle=20, v_border=None):
     # walk around the edges and and plot evenly spaced points
     # respecting the sharpness of the angle
-
+    
     grid = Distribute()
+    grid.v_border = False
+    # p1 garment ---------------------
+    if v_border is not None:
+        grid.v_border = True
+        grid.v_loop = v_border.ordered
+        grid.new_ob = v_border.new_ob
+        grid.new_obm = v_border.new_obm
+        grid.sew_relationships = v_border.sew_relationships
+        #if v_border.iter_count == 1:    
+            #print(v_border.iter_count, "did we do this more than once???")
+            #print(v_border.iter_count, "did we do this more than once???")
+            #print(v_border.iter_count, "did we do this more than once???")
+        grid.accumulated_border_count = v_border.accumulated_border_count
+        grid.new_sew_edges = v_border.new_sew_edges
+        grid.test_attritbute = v_border.test_attritbute
+    # p1 garment ---------------------
+    
     grid.co = np.zeros((len(cut_polyline), 3), dtype=np.float32)
     grid.co[:, :2] = cut_polyline
     
@@ -209,25 +318,36 @@ def redistribute(cut_polyline, grid_size=4.0, angle=20):
     grid.size = grid_size
     grid.seg_vecs = [] # gets filled by the function below
     grid.seg_lengths = [] # gets filled by the function below
-    iters = len(grid.segments)
     new_co = np.empty((0,3), dtype=np.float32)    
+    
 
+    #deselect(v_border.new_ob, sel=np.array(grid.v_loop)[grid.segments[-1]], type='vert')
+    #deselect(v_border.new_ob, sel=grid.v_loop, type='vert')
+    #print(len(grid.new_obm.verts), "how many verts")
+    #print(grid.segments[0], 'segments zero') 
+    #print(np.array(v_loop)[grid.segments[0]], 'segments zero') 
+    
     # create points for every segment between sharps --------------------
-    for i in range(iters):
-        x = generate_perimeter(grid, i)
-        new_co = np.append(new_co, x, axis=0)
+    #for i in range(iters):
+    x = generate_perimeter(grid)
+    new_co = np.append(new_co, x, axis=0)
     
     return new_co
 
 
-def make_objects(border):
+def make_v_objects(border):
+    name = "grid_mesh"
+
+
+def make_objects(border, ob=None):
     """Creates the grid and border 
     objects in the blender scene"""
-    ob = bpy.context.object
-    if ob == None:
-        return
-    if not ob.type == "MESH":
-        return
+    if ob is None:
+        ob = bpy.context.object
+        if ob == None:
+            return
+        if not ob.type == "MESH":
+            return
         
     name = ob.name + '_new_border'
     grid_name = ob.name + '_new_grid'
@@ -440,7 +560,12 @@ the remaining bounds?
 def generate_grid(border):
     """Generates a grid slightly larger than the polyline
     bounding box. Can be quads or tris."""
-    M = border.ob.MC_props.grid_size * 0.1
+    
+    M = border.size * 0.1
+    if border.p1:
+        M = border.inner_size * 0.1
+        border.size = border.inner_size
+    
     min = np.min(border.ordered_co, axis=0)
     max = np.max(border.ordered_co, axis=0)
     
@@ -592,10 +717,13 @@ def join_objects(obs):
     """Put in a list of objects.
     Everything merges with last object
     in the list."""
+    v_counts = [len(ob.data.vertices) for ob in obs]
     ctx = bpy.context.copy()
     ctx['active_object'] = obs[-1]
+    #ctx['active_object'] = obs[0]
     ctx['selected_editable_objects'] = obs
     bpy.ops.object.join(ctx)
+    return v_counts
 
 
 def get_linked(obm, idx, op=None):
@@ -627,7 +755,7 @@ def edge_collisions(border):
     MC_pierce.detect_collisions(cloth=None, grid=border)
 
     obm = get_bmesh(border.grid_ob, refresh=True)
-    
+
     # find the edge collisions and delete collided edges    
     paired = np.zeros((border.eidx.shape[0], 2), dtype=np.int32)
     paired[:, 0] = border.eidx
@@ -691,7 +819,11 @@ def edge_collisions(border):
     # Add the border to the bmesh
     gl = len(border.grid_ob.data.edges)
     bl = len(border.border_ob.data.edges)
-    join_objects([border.border_ob, border.grid_ob])
+    g, b = join_objects([border.border_ob, border.grid_ob])
+
+    if border.p1:    
+        border.sew_relationships['border_verts'] += [[g, b]]
+    
     border.border_edges = np.arange(bl) + gl
 
 
@@ -902,10 +1034,11 @@ def make_edge(fill):
 
 class Fill():
     def __init__(self, border=None):
-        self.border_edges = border.border_edges
-        self.poly_ob = border.ob
-        self.ob = border.grid_ob
+        
         self.name = 'fill'
+        self.border_edges = border.border_edges
+        self.smooth_iters = border.smooth_iters
+        self.ob = border.grid_ob
         self.obm = get_bmesh(self.ob, refresh=True)
         self.v_count = len(self.obm.verts)
         self.vidx = np.arange(self.v_count)
@@ -925,7 +1058,6 @@ class Fill():
         self.boundary_verts = self.boundary_verts + self.floaters
         
         inner_boo = np.ones(self.vidx.shape[0], dtype=np.bool)
-        #inner_boo[self.floaters] = False
         inner_boo[self.border_verts] = False
         self.inner_verts = self.vidx[inner_boo]
         
@@ -933,7 +1065,6 @@ class Fill():
         self.ob.data.vertices.foreach_get('co', self.grid_co.ravel())
         self.border_co = self.grid_co[self.border_verts]
 
-        #self.merge_dist = border.size * border.ob.MC_props.grid_merge_dist
         self.merge_dist = border.size * 1.5
         self.grid_size = border.size
 
@@ -943,9 +1074,8 @@ def edge_delete_pass(fill):
     so that none overlap."""
     re = fill.recent_edges
     obm = fill.obm
-    eidx = np.array([[e.verts[0].index, e.verts[1].index] for e in obm.edges])
-    #all_edges = fe + re
-        
+    eidx = np.array([[e.verts[0].index, e.verts[1].index] for e in obm.edges])    
+
     # this is the indices of the edges in the border
     beidx = fill.border_edges
     
@@ -1121,7 +1251,7 @@ def fill_border(border):
     
     make_faces(fill)
 
-    for i in range(fill.poly_ob.MC_props.grid_smoothing):
+    for i in range(fill.smooth_iters):
         bmesh.ops.smooth_vert(fill.obm, verts=smooth_v, factor=0.5, use_axis_x=True, use_axis_y=True, use_axis_z=True)
             
     if fill.obm.is_wrapped:
@@ -1227,10 +1357,12 @@ class Border():
     def __init__(self, ob, make=True):
         # include the object when creating instance
         # -----------------------
+        self.p1 = False
         self.ob = ob
         self.size = ob.MC_props.grid_size
         self.angle = ob.MC_props.grid_angle_limit
         self.triangles = ob.MC_props.grid_triangles
+        self.smooth_iters = ob.MC_props.grid_smoothing
         
         self.edges = np.empty((len(ob.data.edges), 2), dtype=np.int32)
         ob.data.edges.foreach_get('vertices', self.edges.ravel())
@@ -1241,6 +1373,7 @@ class Border():
         self.ordered_co = cut_polyline[self.ordered]
         
         self.new_border = redistribute(self.ordered_co[:, :2], grid_size=self.size, angle=self.angle)
+        
         generate_grid(self)
         
         self.border_v_count = self.new_border.shape[0]
@@ -1255,7 +1388,7 @@ class Border():
         create_faces(self)
         if make:    
             make_objects(self)
-                
+        
         cut = False
         cut = True
         if cut:    
@@ -1263,4 +1396,126 @@ class Border():
         
         fill_border(self)
         bpy.context.view_layer.update()
+
+
+class V_Border():
+    name = "Border"
+    
+    def __init__(self, ob, make=True, size=0.5, ordered=None, border_co=None, grid=None):
+        """the 'grid' arg is a class instance from the other module"""
+        # include the object when creating instance
+        # -----------------------
+        print(len(ob.data.vertices), "a v count")
+        self.p1 = True
+        self.ob = ob
+        self.new_ob = grid.new_ob
+        self.new_obm = grid.new_obm
+        self.new_sew_edges = grid.new_sew_edges
+        self.test_attritbute = grid.test_attritbute
+        print(self.test_attritbute, "test attribute")
+        self.size = size
+        self.inner_size = grid.inner_size
+        self.angle = 10
+        self.triangles = True
+        self.smooth_iters = 7
+        #self.edges = edges
+        self.ordered = ordered
+        self.sew_relationships = grid.sew_relationships
+        self.iter_count = grid.iter_count
+        self.accumulated_border_count = grid.accumulated_border_count
+        self.ordered_co = border_co
         
+        self.new_border = redistribute(self.ordered_co[:, :2], grid_size=self.size, angle=self.angle, v_border=self)
+        generate_grid(self)
+        
+        self.border_v_count = self.new_border.shape[0]
+        
+        self.cull_verts = np.zeros(self.grid_co.shape[0], dtype=np.bool)
+        self.cull_idxer = np.arange(self.grid_co.shape[0])
+        
+        # offset every other row and create border edges
+        grid_edge_stuff(self)
+        # ----------------------------------------------
+        
+        create_faces(self)
+        if make:    
+            make_objects(self, ob)
+        
+        cut = False
+        cut = True
+        if cut:
+            edge_collisions(self)
+        
+        fill_border(self)
+        
+        # need this??
+        bpy.context.view_layer.update()
+        
+            
+        ob = self.grid_ob
+        faces = [[v + grid.face_offset for v in p.vertices] for p in ob.data.polygons]
+        co = np.empty((len(ob.data.vertices), 3), dtype=np.float32)
+        ob.data.vertices.foreach_get('co', co.ravel())
+        grid.face_offset += co.shape[0]
+        
+        grid.full_faces += faces
+        
+        #this should be what I need to get the panels of the new grid
+        grid.panel_indices[grid.panel] = np.arange(co.shape[0]) + len(grid.full_vertices)
+        
+        grid.full_vertices += co.tolist()        
+        self.accumulated_border_count = len(grid.full_vertices)
+        grid.accumulated_border_count = len(grid.full_vertices)
+        grid.new_sew_edges += self.new_sew_edges
+        
+        
+        if grid.done:
+            idx = 0
+            total_b_verts = []
+            for g in grid.sew_relationships['border_verts']:
+                total_b_verts += (np.arange(g[0]) + idx + g[1]).tolist()
+                
+                idx += (g[0] + g[1])
+                
+
+            npfv = np.array(grid.sew_relationships['no_fold_verts'])
+            nptv = np.array(grid.sew_relationships['three_verts'])
+            npbv = np.array(total_b_verts)
+            bool = np.zeros(npfv.shape[0], dtype=np.bool)
+            
+            #print(grid.sew_relationships['three_verts'])
+            
+            other_verts = []
+            new_edges = []
+            for i, j in zip(npfv, npbv):
+                bool[:] = False
+                vert = self.new_obm.verts[i]
+                lv = [e.other_vert(vert).index for e in vert.link_edges if len(e.link_faces) == 0]
+                #print(len(lv), "how many verts here")
+                other_verts += lv
+                
+                #print(nptv.shape, "shape should be n x 3")
+                #print(nptv.shape, "shape should be n x 3")
+                #print(nptv.shape, "shape should be n x 3")
+                for v in lv:
+                    bool[np.any(nptv == v, axis=1)] = True
+
+                #print(np.sum(bool), "bool sum")    
+                    
+                match = npbv[bool]
+                #print(match)
+                for m in match:
+                    new_edges += [[j, m]]
+                
+                #print(i, j, "i j")
+
+            #print(new_edges, "this is new edges")
+            #border.grid_ob
+              
+                
+            ob = link_mesh(grid.full_vertices, edges=new_edges, faces=grid.full_faces, name='name', ob=ob)
+            grid.new_grid_ob = ob
+            #deselect(ob, total_b_verts)
+            #deselect(self.new_ob, grid.sew_relationships['no_fold_verts'])
+            #deselect(self.new_ob, other_verts)
+            

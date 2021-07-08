@@ -1,7 +1,12 @@
-import bpy
-import numpy as np
-import bmesh
-import time
+
+try:
+    import bpy
+    import bmesh
+    import numpy as np
+    import time
+
+except ImportError:
+    pass
 
 
 big_t = 0.0
@@ -11,6 +16,54 @@ def rt_(num=None):
     if num is not None:    
         print(t - big_t, "timer", num)
     big_t = t
+
+
+def deselect(ob, sel=None, type='vert'):
+    """Deselect all then select something"""
+    x = np.zeros(len(ob.data.vertices), dtype=np.bool)
+    y = np.zeros(len(ob.data.edges), dtype=np.bool)
+    z = np.zeros(len(ob.data.polygons), dtype=np.bool)
+
+    ob.data.vertices.foreach_set('select', x)
+    ob.data.edges.foreach_set('select', y)
+    ob.data.polygons.foreach_set('select', z)
+    
+    if sel is not None:    
+        if type == 'vert':    
+            x[sel] = True
+            ob.data.vertices.foreach_set('select', x)
+        if type == 'edge':
+            y[sel] = True
+            ob.data.edges.foreach_set('select', y)
+        if type == 'face':
+            z[sel] = True
+            ob.data.polygons.foreach_set('select', z)
+    ob.data.update()
+
+
+def get_linked(obm, idx, limit=10):
+    """put in the index of a vert. Get everything
+    linked just like 'select_linked_pick()'"""
+    vboos = np.zeros(len(obm.verts), dtype=np.bool)
+    cvs = [obm.verts[i] for i in idx]
+    #cvs = [obm.verts[idx]]
+    escape = False
+    while not escape:
+        new = []
+        for v in cvs:
+            if not vboos[v.index]:
+                vboos[v.index] = True
+                lv = [e.other_vert(v) for e in v.link_edges]
+                culled = [v for v in lv if not vboos[v.index]]
+                new += culled
+        cvs = new
+        if len(cvs) == 0:
+            escape = True
+        if np.sum(vboos) >= limit:
+            escape = True    
+            
+    idxer = np.arange(len(obm.verts))[vboos]
+    return idxer
 
 
 def inside_triangles(tris, points, margin=0.0):#, cross_vecs): # could plug these in to save time...
@@ -128,16 +181,34 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     phase collision culling. et does edges and tris.
     Also groups edges in boxes.""" # first box is based on bounds so first box could be any shape rectangle
     
-    sh = cloth.pierce_co.shape[0]
-    shh = cloth.pierce_co.shape
-    
-    if bounds is None:
-        cloth.pierce_co.shape = (shh[0] * 2, 3)
-        b_min = np.min(cloth.pierce_co, axis=0)
-        b_max = np.max(cloth.pierce_co, axis=0)
-        cloth.pierce_co.shape = shh
-    else:
-        b_min, b_max = bounds[0], bounds[1]
+    if not sc.grid: # prolly could just change cloth.pierce_co to sc.edges
+        sh = cloth.pierce_co.shape[0]
+        shh = cloth.pierce_co.shape
+        
+        if bounds is None:
+            cloth.pierce_co.shape = (shh[0] * 2, 3)
+            b_min = np.min(cloth.pierce_co, axis=0)
+            b_max = np.max(cloth.pierce_co, axis=0)
+            cloth.pierce_co.shape = shh
+        else:
+            b_min, b_max = bounds[0], bounds[1]
+        
+    if sc.grid:
+        sh = sc.edges.shape[0]
+        shh = sc.edges.shape
+        
+        if bounds is None:
+            sc.edges.shape = (shh[0] * 2, 3)
+            b_min = np.min(sc.edges, axis=0)
+            b_max = np.max(sc.edges, axis=0)
+            sc.edges.shape = shh
+        else:
+            b_min, b_max = bounds[0], bounds[1]
+
+        if idx is None:
+            idx = sc.g_idx
+        if eidx is None:    
+            eidx = sc.b_idx
         
     # bounds_8 is for use on the next iteration.
     mid, bounds_8 = generate_bounds(b_min, b_max, margin)
@@ -360,23 +431,28 @@ def self_collisions_7(sc, cloth=None):
             continue
         
         tris = sc.tris[trs]
-        eds = cloth.eidx[ed]
+        #eds = cloth.eidx[ed]
         
-        # detect link faces and broadcast
-        ttt = cloth.tridex[trs][:, :, None]
-        nlf_0 = cloth.eidx[ed][:, 0] == ttt
-        nlf_1 = cloth.eidx[ed][:, 1] == ttt
-        ab1 = np.any(nlf_0, axis=1)
-        ab2 = np.any(nlf_1, axis=1)
-        ab = ab1 | ab2
+        if not sc.grid:
+            # detect link faces and broadcast
+            ttt = cloth.tridex[trs][:, :, None]
+            nlf_0 = cloth.eidx[ed][:, 0] == ttt
+            nlf_1 = cloth.eidx[ed][:, 1] == ttt
+            ab1 = np.any(nlf_0, axis=1)
+            ab2 = np.any(nlf_1, axis=1)
+            ab = ab1 | ab2
         
         rse = np.tile(ed, trs.shape[0])
         rse.shape = (trs.shape[0], ed.shape[0])
         rst = np.repeat(trs, ed.shape[0])
         rst.shape = (trs.shape[0], ed.shape[0])
         
-        re = rse[~ab] # repeated edges with link faces removed
-        rt = rst[~ab] # repeated triangles to match above edges
+        if not sc.grid:
+            re = rse[~ab] # repeated edges with link faces removed
+            rt = rst[~ab] # repeated triangles to match above edges
+        if sc.grid:
+            re = rse
+            rt = rst
         
         if True:        
             in_x = txmax[rt] >= sc.exmin[re]
@@ -402,111 +478,37 @@ def self_collisions_7(sc, cloth=None):
             sc.ees += re.tolist()
             sc.trs += rt.tolist()
 
-
-def eliminate_duplicate_pairs(ar, sort=True):
+def eliminate_duplicate_pairs(ar):
     """Eliminates duplicates and mirror duplicates.
     for example, [1,4], [4,1] or duplicate occurrences of [1,4]
     Returns an Nx2 array."""
     # no idea how this works (probably sorcery) but it's really fast
-    a = ar
-    if sort:
-        a = np.sort(ar, axis=1)
+    a = np.sort(ar, axis=1)
     x = np.array(np.random.rand(a.shape[1]), dtype=np.float32)
     y = a @ x
     unique, index = np.unique(y, return_index=True)
     return a[index], index
 
 
-def side_sort(points, tridex, cloth):
+def side_sort(points, tridex):
     # get the unique pairs
     unip, p_idx = eliminate_duplicate_pairs(points)
     
-    tri_p = tridex[p_idx]    
-    
-    
-    # boundary check
-    if False:
-        cloth.boundary_verts = np.array([[v.index for v in t.verts if v.is_boundary] for t in cloth.triobm.faces], dtype=np.object)
-        cloth.boundary_bool = np.array([[v.is_boundary for v in t.verts] for t in cloth.triobm.faces], dtype=np.bool)
-        cloth.boundary_tris = np.array([np.any(b) for b in cloth.boundary_bool], dtype=np.bool)
-        
-        
-        print(tri_p, "this is tri-p")
-        ct = tri_p[cloth.boundary_tris[tri_p]]
-        print(cloth.boundary_verts[ct], "this is the verts")
-#        clo
-#        
-#        
-#        now i need a way to move towards the outside edge...
-#        I suppose I could just move past the boundary vert...
-#        Maybe by the sc margin?
-#        so... 
-        
-        for i, t in enumerate(cloth.boundary_bool):
-            if np.any(t):
-                bpy.context.object.data.vertices[cloth.tridex[i][0]].select = True
-                
-        cloth.ob.data.update()
-        #cloth.bt_edges = [[[e.verts[0].index, e.verts[1].index] for e in t.edges] for t in cloth.triobm.faces]
-        
-        #print(cloth.boundary_bool)
-        
-        
-    #print(unip.shape)
-    #print(tri_p)
-        
-        is_boundary = cloth.boundary_tris[tri_p]
-        if np.any(is_boundary):
-            print("found one")
-        #print(tri_p[is_boundary], "b tris")
-        #print(unip[is_boundary], "index here?")
-        
-        
-        
-        #cloth.boundary_tris[tri_p]
-#        problem: a boundary tri
-#        could just have a vert
-#        and not an edge.
-#        When this happens
-#        could move towards the vert
-#        also could move towards the eges
-#        a boundary edge connected
-#        to the vert.
-#        Need to change boundary 
-#        tris to vert.is_boundary
-#        find the other vert that
-#        is boundary.
-#        Should always be at least
-#        one (I think two) edge that is boundary
-#        connected to the vert
-        
-    
-    
-#    So the idea is where a tri is on the boundary
-#    if an edge pierces it, we need to find
-#    That tri's' edge verts. will also need
-#    the point on the plane so we can measure.
-#    could spit that out and do it in the other
-#    function
-    
-    # get the edges and tris where boundary happens
-    
-
     uni, idx, inv, counts = np.unique(unip, return_inverse=True, return_counts=True, return_index=True)
         
     cinv = counts[inv]
     sh = cinv.shape[0]
     cinv.shape = (sh//2, 2)
-    
 
-
-    # multi edges
-    culprits = counts > 1
+    culprits = counts > 2
 
     verts = uni[culprits]
+    tris = np.repeat(tridex[p_idx], 2)[idx][culprits]
 
-    e_tiled_tris = np.repeat(tri_p, 2)[idx]
-    tris = e_tiled_tris[culprits]
+    if False:
+        cloth.boundary_bool = np.array([[e.is_boundary for e in t.edges] for t in cloth.triobm.faces], dtype=np.bool)
+        cloth.boundary_tris = np.array([np.any(b) for b in cloth.boundary_bool], dtype=np.bool)
+        cloth.bt_edges = np.array([[[e.verts[0].index, e.verts[1].index] for e in t.edges] for t in cloth.triobm.faces], dtype=np.int32)
 
 
     
@@ -514,7 +516,7 @@ def side_sort(points, tridex, cloth):
     return verts, tris
 
 
-def ray_check_oc(sc, ed, trs, cloth):
+def ray_check_oc(sc, ed, trs, cloth, grid, flood=False):
     
     """Need to fix selected points by removing them
     from the weights. (For working in edit mode)
@@ -523,21 +525,26 @@ def ray_check_oc(sc, ed, trs, cloth):
     
     eidx = np.array(ed, dtype=np.int32)
     tidx = np.array(trs, dtype=np.int32)
-
+    
+    if grid is not None:
+        grid.eidx = eidx
+        grid.tidx = tidx
+        return
+    
     e = sc.edges[eidx]
     t = sc.tris[tidx]
 
-    start_co = e[:, 0]
-    co = e[:, 1]
+    ls = e[:, 0]
+    rs = e[:, 1]
 
     ori = t[:, 0]
     t1 = t[:, 1] - ori
     t2 = t[:, 2] - ori
     norms = np.cross(t1, t2)
     #u_norms = norms / np.sqrt(np.einsum('ij,ij->i', norms, norms))[:, None]
-    start_vecs = start_co - ori
-    vecs = co - ori
-    start_dots = np.einsum('ij,ij->i', start_vecs, norms)
+    ls_vecs = ls - ori
+    rs_vecs = rs - ori
+    start_dots = np.einsum('ij,ij->i', ls_vecs, norms)
     #dots = np.einsum('ij,ij->i', vecs, u_norms)
     
     #es = cloth.eidx.shape
@@ -550,8 +557,8 @@ def ray_check_oc(sc, ed, trs, cloth):
     #print(eidx[switch])
     #print(es)
     #print(cloth.eidx[es:][eidx][switch])
-    e_vec = co - start_co
-    or_vec = start_vecs
+    e_vec = rs - ls
+    or_vec = ls_vecs
     e_n_dot = start_dots
     e_dot = np.einsum('ij,ij->i', e_vec, norms)
     scale = e_n_dot / e_dot
@@ -560,24 +567,107 @@ def ray_check_oc(sc, ed, trs, cloth):
 
     #if not np.any(through):
         #return
-    #print(through[switch])
+    #print(through[switch]) 
     
     plot = (or_vec - e_vec * scale[:, None]) + ori
     plots = plot[through]
 
-    rt = t[through]
-    check, weights = inside_triangles(rt[:, :3], plots, margin= 0.0)
+
+    rt = t[:, :3][through]
+    check, weights = inside_triangles(rt, plots, margin= 0.0)
+    u_norms = norms / np.sqrt(np.einsum('ij,ij->i', norms, norms))[:, None]
+    p_norms = u_norms[through][check]
+    p_dirs = np.sign(e_dot[through][check])
+    
+    p_e_vecs = e_vec[through][check]
     
     if np.any(check):
-            
-
 
         points = cloth.eidx[ed][through][check]
+        edge_idx = cloth.peidx[ed][through][check]
+        p_tris = rt[check]
+            
+        if flood:
+            movers = []
+            moves = []
+            sums = []
+            print("doing flood stuff")
+            
+            cloth.obm.verts.ensure_lookup_table()
+
+            for i in range(points.shape[0]):
+                pe = points[i]
+                print(pe)
+                pt = p_tris[i]
+                pn = p_norms[i]
+                p_dir = p_dirs[i]
+                pev = p_e_vecs[i]
+                idx = get_linked(cloth.obm, pe, limit=10)
+                
+                link_vecs = cloth.co[idx] - pt[0]
+                link_dots = np.einsum('j,ij->i', pev, link_vecs)
+                link_dir = np.einsum('j,ij->i', pn, link_vecs)
+                dir2 = np.sign(np.sum(link_dir))
+            
+                ignore = True
+                summy = np.sum(np.sign(link_dir))
+                if summy > 3:
+                    ignore = False
+                    idx = pe[1]
+                if summy < -3:        
+                    ignore = False
+                    idx = pe[0]
+                if not ignore:
+                    movers += [idx]
+                    m_or_vec = cloth.co[idx] - pt[0]
+                    dist = m_or_vec @ (pn * 1.01)
+                    moves += [pn * dist * dir2]
+
+            print(movers)
+            print(np.array(moves)[:, 2])
+            
+            
+            
+            if len(moves) > 0:    
+                uni, inv, counts = np.unique(movers, return_inverse=True, return_counts=True)
+                moves /= counts[inv][:, None]
+                np.add.at(cloth.co, movers, np.array(moves))
+
+                
+#                    
+#                the face has a normal
+#                the points are on opposite sides of that face
+#                measuring from lt to right p_dir is either the same
+#                    or opposite direction of normal
+#                dir2 either matches or opposes direction of normal
+#                dir2 then represents the direction the point should
+#                    move relative to the normal
+#                for now lets assume we just want to move one point
+#                    either the left or right.
+#                three things:
+#                    1. the normal
+#                    2. the direction of the edge relative to the normal
+#                    3. the direction of the linked points.
+#                    if the 
+                    
+                            
+            #deselect(cloth.ob, points.ravel())
+            #deselect(cloth.ob, idx)
+            
+            
+            
+            
+            
+            #for e in points:
+                #cloth.ob.data.vertices[e[0]].select = True
+                #cloth.ob.data.vertices[e[1]].select = True
+            return
+
+
         #print(points)
         
-        #cloth.co[cloth.eidx[ed][through][check]] += np.array([0.0, 0.0, 0.001])
         #print(eidx[through][check]])
-        verts, tris = side_sort(points, tidx[through][check], cloth)
+        verts, tris = side_sort(points, tidx[through][check])
 
         
         if tris.shape[0] > 0:            
@@ -588,12 +678,9 @@ def ray_check_oc(sc, ed, trs, cloth):
             dot = np.einsum('ij,ij->i', vec, nor)
             
             move = nor * dot[:, None] * -(1 + cloth.ob.MC_props.self_collide_margin)
-                
+            cloth.co[verts] += move
+        
             
-            #testing = True
-            testing = False
-            if not testing:    
-                cloth.co[verts] += (move * 1)
             
         
 def slide_point_to_plane(e1, e2, normal, origin, intersect=False):
@@ -680,19 +767,29 @@ def slide_point_to_plane(e1, e2, normal, origin, intersect=False):
 class PierceCollide():
     name = "sc"
     
-    def __init__(self, cloth):
+    def __init__(self, cloth, grid=None):
+        
+        if grid is None:        
+            self.grid = False
+            ob = cloth.ob
+            # -----------------------
+            tridex = cloth.tridex
+            
+            # -----------------------
 
-        # -----------------------
-        ob = cloth.ob
-        tridex = cloth.tridex
-        
-        # -----------------------
+            self.box_max = cloth.ob.MC_props.sc_box_max
+            
+            self.tris = cloth.co[tridex]
+            self.edges = cloth.pierce_co#[cloth.pc_edges]
 
-        self.box_max = cloth.ob.MC_props.sc_box_max
-        
-        self.tris = cloth.co[tridex]
-        self.edges = cloth.pierce_co#[cloth.pc_edges]
-        
+        else:
+            self.grid = True
+            self.box_max = 150
+            self.tris = grid.g_edge_co
+            self.g_idx = np.arange(grid.g_edge_co.shape[0])
+            self.edges = grid.b_edge_co
+            self.b_idx = np.arange(grid.b_edge_co.shape[0])
+            
         self.big_boxes = [] # boxes that still need to be divided
         self.small_boxes = [] # finished boxes less than the maximum box size
 
@@ -700,78 +797,15 @@ class PierceCollide():
         self.ees = []
         
 
-def detect_collisions(cloth):
+def detect_collisions(cloth, grid=None):
     
-    sc = PierceCollide(cloth)
+    sc = PierceCollide(cloth, grid)
     self_collisions_7(sc, cloth)
-    ray_check_oc(sc, sc.ees, sc.trs, cloth)
-
-
-def register():
-    pass
-
-
-def unregister():
-    pass
-
-
-if __name__ == "__main__":
-    register()
+    ray_check_oc(sc, sc.ees, sc.trs, cloth, grid)
     
-    
-"""
-could detect if an object is both a collider and cloth
-and switch to using self collision code in this case.
-
-!!! Use the duplicate pairs code for stability in sc
 
 
-!!! virtual edge faces for self collisions. Think cloth thickness.
-
-!!! The inside trianlges margin helped with collision fails
-        maybe tri this on the quarter zip.
-
-Maybe have a real world size value
-
-do a closest point on mesh check for every vert for the wrap force
-    See if that runs at a decent speed.
-    
-For the p1 sims... Could create a much simplified mesh
-    simulate that around the avatar then pick up on the
-    high res sim once the low res is in place.
-
-prolly should go back to bounds check for object collide
-    seems like I'm getting slowdons like the sparse object
-
-need to debug sparse objects.
-    
-If all the forces are separated I could multi-thread
-cloth.force_stretch
-cloth.force_bend
-cloth.force_sew
-cloth.force_ob_collide
-cloth.force_sc_collide
-cloth.force_detnagle
-
-could I iterate at the end of collision working on
-    the same set of eidx and tidx without repeating broad phase?
-
-Could I put a box max on the octree, especially at the first?
-    that should make all eight boxes empty if a collide
-    object is way out there. Maybe doesn't make sense
-    for self collide? have to think about it.
-    
-wind ui should have one label and three side by side
-Maybe do the same for gravity
-
-Could experiment with shrink/fatten on the folds in the p1 sims
-Maybe create a mix of prerwap and flat for the bend targets?
-Get the springs for both and run both with bend springs.
-
-Having mutiple source shape keys might allow some intersting things...
-
-for the simplified mesh: think of the hi_res mesh moving
-towards it with a force. Could use the simplified mesh
-as a sort of guide for the springs and sewing...
-    
-"""
+def flood_collisions(cloth):
+    sc = PierceCollide(cloth, grid=None)
+    self_collisions_7(sc, cloth)
+    ray_check_oc(sc, sc.ees, sc.trs, cloth, grid=None, flood=True)

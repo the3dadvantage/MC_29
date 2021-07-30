@@ -45,8 +45,7 @@
 
 """
 To do:
-    1. Fix self collisions and tight sewing.
-        Can't think of a way to do this.
+    1. 
     2. Check if Jake's new code for fabric groups is being used properly
     3. 
     4. 
@@ -226,8 +225,6 @@ def layer_manager(cloth):
     move = closest_point_mesh(cloth, avatar)
     locs = cloth.co + move
     
-    
-    
     print("sort out layers")
     print("requires knowing layer order")
     # for inner layers:
@@ -352,8 +349,6 @@ def setup_fabric_group_physics(cloth):
         sel = fg_bools[f[1]]
         
         val = f[0].bend / max_bend
-        print(f[0].bend, "bend val I'm getting")
-        print(val, "this should be the bend val sent to the group")
         manage_vg(cloth, val, 'MC_bend', 'bend_group', sel)
     
 
@@ -378,11 +373,8 @@ def get_panel_layer_order(cloth, bias=5):
     
     ### -----------------
     # issues so far:
-    # 1. avatar outer margin way too high.
-    #   setting to avatar collision setting from p1
     # 2. extra_bend_stiffness causing collision errors
     # 3. same_panel_sewing causes collision errors in the field.
-    # 4. everything is way to bend stiffy
     ### -----------------
     
     # flip backwards sew lines??
@@ -435,14 +427,14 @@ def get_panel_layer_order(cloth, bias=5):
 
     # identify collar/mostly-folded type panel    
     # identify sew verts for comparison
-    fold_bias = 0.1
-    cloth.sew_verts = np.zeros(len(cloth.ob.data.vertices), dtype=np.bool)
-    cloth.sew_verts[cloth.eidx[cloth.sew_edges].ravel()] = True
+    fold_bias = 0.25
+    #cloth.sew_verts = np.zeros(len(cloth.ob.data.vertices), dtype=np.bool)
+    #cloth.sew_verts[cloth.eidx[].ravel()] = True
     
     vert_indexer = np.arange(len(cloth.ob.data.vertices))
     for k, v in cloth.panel_bools.items():
         edges = same_panel_sew_edges[k].edges
-        spse_verts = cloth.eidx[edges].ravel()
+        spse_verts = np.unique(cloth.eidx[edges].ravel())
         verts = vert_indexer[v]
 
         if spse_verts.shape[0] > 0:
@@ -450,12 +442,8 @@ def get_panel_layer_order(cloth, bias=5):
                 if spse_verts.shape[0] / verts.shape[0] > fold_bias:
                     cloth.panel_types[k] = 'folded'
                     print("panel", k, "identified as folded based on", fold_bias, "bias")
-                    print("ratio", spse_verts.shape[0] / verts.shape[0])
-        
-        #for ve in verts:
-            #if cloth.sew_verts[ve]:    
-    
-    
+                print("ratio", spse_verts.shape[0] / verts.shape[0])
+
     return    
     
     """
@@ -473,11 +461,7 @@ def get_panel_layer_order(cloth, bias=5):
     """
     Identify layer order where possible for use with layer_manager()    
     """
-    #working here
-    #just added new bend springs
-    #sew_flip seems to be causing errors in the collar
-    #sewing does not work like expected
-    
+
     # do the self collide thing to get points and tris
     # do the plot things to get locations of points on tris
     # do the closest point on mesh thing with the avatar
@@ -490,9 +474,6 @@ def get_panel_layer_order(cloth, bias=5):
             if gg != g:
                 print(g, gg)
                 # each panel will have an order list where possible
-    
-    
-    
     
     ob = cloth.ob
     g_count = len(groups)
@@ -1275,6 +1256,38 @@ def get_proxy_co(ob, co=None, proxy=None, return_proxy=False):
 
 
 # universal ---------------
+def get_proxy_co_mods(ob, co=None, proxy=None, return_proxy=False, types=["SOLIDIFY"]):
+    """Gets co with modifiers like cloth exculding mods in types"""
+    mods = [m for m in ob.modifiers]
+    views = [m.show_viewport for m in mods]
+
+    for m in mods:
+        if m.type in types:
+            m.show_viewport = False
+    
+    if proxy is None:
+
+        dg = bpy.context.evaluated_depsgraph_get()
+        prox = ob.evaluated_get(dg)
+        proxy = prox.to_mesh()
+        
+    if co is None:
+        vc = len(proxy.vertices)
+        co = np.empty((vc, 3), dtype=np.float32)
+
+    proxy.vertices.foreach_get('co', co.ravel())
+    if return_proxy:
+        return co, proxy, prox
+
+    ob.to_mesh_clear()
+    
+    for m, v in zip(mods, views):
+        m.show_viewport = v
+
+    return co
+
+
+# universal ---------------
 def get_co(ob, ar=None):
     """Get vertex coordinates from an object in object mode"""
     c = len(ob.data.vertices)
@@ -1532,6 +1545,16 @@ def box_bary_weights(poly, point, vals=[]):
     v1 = np.nan_to_num(pa / ba)
     v2 = np.nan_to_num(pa / ca)
     return [v1, v2]
+
+
+# universal ---------------
+def eliminate_pairs(ar1, ar2):
+    """Remove pairs from ar1 that are in ar2"""
+    x = np.array(np.random.rand(ar1.shape[1]), dtype=np.float32)
+    y = ar1 @ x
+    z = ar2 @ x
+    booly = np.isin(y, z, invert=True)
+    return ar1[booly], booly
 
 
 # universal ---------------
@@ -2031,8 +2054,6 @@ def v_bend_springs(cloth):
         v_bend_div = counts[inv]
         cloth.vb_div_0 = v_bend_div[:bs.shape[0]][:, None]
         cloth.vb_div_1 = v_bend_div[bs.shape[0]:][:, None]
-    
-    #print(norms, "yes??")
 
 
 def v_bend(cloth):
@@ -2063,9 +2084,6 @@ def ultimate_bend_springs(cloth):
     """
     I can add values to e_tips and e_tris without
     changing how anything works... I think...
-    
-    
-    
     """
     
     ob = cloth.ob
@@ -2223,8 +2241,6 @@ def flatten_bend(cloth):
     new_cpoe = np.einsum('ij,ikj->ik', u_av_norms, tip_or_vecs)
     dif = cpoe_on_u_av_norms - new_cpoe
     dif *= cloth.bend_group.ravel()[e_edges]
-    #print(dif.shape, "dif shape")
-    #print(cloth.bend_group[e_edges].shape, "bge shape")
     
     bend = cloth.ob.MC_props.bend    
     
@@ -2240,7 +2256,7 @@ def flatten_bend(cloth):
 def edge_stretch_springs(cloth):
     sco = cloth.source_co
     bs = cloth.basic_set
-    
+
     # across tri tips
     tips = []
     for e in cloth.obm.edges:
@@ -2252,35 +2268,33 @@ def edge_stretch_springs(cloth):
                     vs = [v.index for v in f.verts if v.index not in edv]
                     tip += vs
                 tips.append(tip)
-    #print(tips)
+
     if len(tips) > 0:
         ebs, idx = pairs_idx(np.append(bs, tips, axis=0))
-    else:    
+    else:
         ebs, idx = pairs_idx(bs)
     cloth.flat_ebs = ebs.flatten()
     cloth.es_springs = ebs
-    
+
     vecs = sco[ebs[:, 1]] - sco[ebs[:, 0]]
     dots = np.einsum('ij,ij->i', vecs, vecs)
     cloth.es_lens = np.sqrt(dots)
     cloth.es_accumulator = np.zeros(sco.shape[0], dtype=np.float32)
     cloth.es_div = np.zeros(dots.shape[0] * 2, dtype=np.float32)
     cloth.es_double_vecs = np.zeros((vecs.shape[0] * 2, 3), dtype=np.float32)
-    
 
-def edge_stretch_solve(cloth, stretch=None):
-    
+
+def edge_stretch_solve_mean(cloth):
     if stretch is None:
         stretch = cloth.ob.MC_props.stretch
     ebs = cloth.es_springs
-    
     
     mass_dif = cloth.mass_group[ebs[:, 1]] - cloth.mass_group[ebs[:, 0]]
     
     vecs = cloth.co[ebs[:, 1]] - cloth.co[ebs[:, 0]]
     dots = np.einsum('ij,ij->i', vecs, vecs)
     lens = np.sqrt(dots)
-    dif = (cloth.es_lens - lens) * 0.5
+    dif = ((cloth.es_lens * cloth.ob.MC_props.shrink_grow) - lens) * 0.5
     abs_dif = np.abs(dif)
     cloth.es_accumulator[:] = 0.0
     
@@ -2294,6 +2308,40 @@ def edge_stretch_solve(cloth, stretch=None):
     cloth.es_div[1::2] = dif
     cloth.es_div *= divs
     
+    u_vecs = vecs / lens[:, None]
+    mass_shift = u_vecs * mass_dif[:, None]
+    cloth.es_double_vecs[0::2] = u_vecs + mass_shift
+    cloth.es_double_vecs[1::2] = u_vecs - mass_shift
+    
+    move = np.nan_to_num(cloth.es_double_vecs * cloth.es_div[:, None]) * stretch
+    
+    np.add.at(cloth.co, cloth.flat_ebs, move)
+    
+
+def edge_stretch_solve(cloth, stretch=None):
+    
+    if stretch is None:
+        stretch = cloth.ob.MC_props.stretch
+    ebs = cloth.es_springs
+    
+    mass_dif = cloth.mass_group[ebs[:, 1]] - cloth.mass_group[ebs[:, 0]]
+    
+    vecs = cloth.co[ebs[:, 1]] - cloth.co[ebs[:, 0]]
+    dots = np.einsum('ij,ij->i', vecs, vecs)
+    lens = np.sqrt(dots)
+    dif = ((cloth.es_lens * cloth.ob.MC_props.shrink_grow) - lens) * 0.5
+    abs_dif = np.abs(dif)
+    cloth.es_accumulator[:] = 0.0
+    
+    cloth.es_div[0::2] = abs_dif
+    cloth.es_div[1::2] = abs_dif
+    np.add.at(cloth.es_accumulator, cloth.flat_ebs, cloth.es_div)
+    
+    divs = cloth.es_div / cloth.es_accumulator[cloth.flat_ebs]
+    
+    cloth.es_div[0::2] = -dif
+    cloth.es_div[1::2] = dif
+    cloth.es_div *= divs
     
     u_vecs = vecs / lens[:, None]
     mass_shift = u_vecs * mass_dif[:, None]
@@ -2304,7 +2352,6 @@ def edge_stretch_solve(cloth, stretch=None):
     
     np.add.at(cloth.co, cloth.flat_ebs, move)
     #divs = cloth.es_div[cloth.flat_ebs] / cloth.es_accumulator
-    #print(divs)
     
 
 # ============================================================ #
@@ -2474,7 +2521,6 @@ def create_surface_follow_data(active, cloths):
             #v = proxy.data.vertices
             #for i in cloth.surface_tridex.ravel():
                 #bpy.ops.object.empty_add(location=proxy.matrix_world @ v[i].co)
-            #print(tri_keys)
 
             # delete temp mesh
             me = sel_object.data
@@ -2699,16 +2745,7 @@ def get_sew_springs(cloth, field=False):
         
     if len(cloth.field_sew_edges) > 0:
         cloth.field_sew = True
-    rt_('time to sew') 
-    
-    """
-    I can't describe the difference between edges that should sew together
-    tight and boundary edges on the sides of fields that sew together.
-    
-    If I make a rule that when a boundary sews to a boundary it sews tight...
-    
-    
-    """
+    rt_('time to sew')
     
 
 def hook_force(cloth):
@@ -2788,7 +2825,6 @@ def sew_force_1(cloth):
     means = cloth.sew_mean / cloth.sew_div
     vecs = (means[cloth.sew_mean_idx] - cloth.co[cloth.all_sew]) #* cloth.ob.MC_props.sew_force
 
-
     if cloth.ob.MC_props.self_collide:
         if cloth.ob.MC_props.self_collide_margin > tl * 2:
             tl = cloth.ob.MC_props.self_collide_margin / 2
@@ -2811,9 +2847,6 @@ def sew_force_1(cloth):
     nn = np.nan_to_num(vecs)# * cloth.ob.MC_props.sew_force
     #np.add.at(cloth.co, cloth.all_sew, nn)
     cloth.co[cloth.all_sew] += vecs * cloth.ob.MC_props.sew_force
-    print(cloth.all_sew)
-    print(cloth.sew_mean_idx, "mean idx")
-    #print(np.unique(cloth.all_sew).shape, "uin")
 
 
 def field_sew_force(cloth):
@@ -2833,18 +2866,10 @@ def field_sew_force(cloth):
     if tl != 0:
         vecs = cloth.co[cloth.f_sew_fancy_indexer] - cloth.co[cloth.f_sew_add_indexer]
         l = np.sqrt(np.einsum('ij,ij->i', vecs, vecs))
-        #move_l = (l - tsl)# * cloth.ob.MC_props.sew_force
-        move_l = (l - tl)# * cloth.ob.MC_props.sew_force
+        move_l = (l - tl)
         vecs *= (move_l / l)[:, None]
-
         nn = np.nan_to_num(vecs) * (cloth.ob.MC_props.sew_force * .5)
-        #short = move_l < 0.5
-        #nn[short] *= .1
-        #nn[~short] *= (cloth.ob.MC_props.sew_force * .5)
-
-        #nn = np.nan_to_num(vecs) * (cloth.ob.MC_props.sew_force * .5)
         np.add.at(cloth.co, cloth.f_sew_add_indexer, nn)
-
         return
 
     cloth.f_sew_mean[:] = 0.0
@@ -2858,7 +2883,57 @@ def field_sew_force(cloth):
     cloth.co[cloth.f_all_sew] += vecs * cloth.ob.MC_props.sew_force    
 
 
+def get_butt_edges(cloth, limit=0.4, verify=False):
+    """Find places where boundaries sew
+    together at butt ends so we can
+    pull them together tight.
+    Can run always using MC_props.butt_sew_dynamic"""
+    
+    update_v_norms(cloth)
+    se = cloth.eidx[cloth.sew_edges]
+    sv = cloth.co[se[:, 1]] - cloth.co[se[:, 0]]
+    sv_len = np.sqrt(np.einsum('ij,ij->i', sv, sv))
+    usv = sv / sv_len[:, None]
+    
+    ls_dot = np.einsum('ij,ij->i', cloth.v_norms[se[:, 0]], usv)
+    rs_dot = np.einsum('ij,ij->i', cloth.v_norms[se[:, 1]], usv)
+    
+    butt_edges = (np.abs(ls_dot) < limit) & (np.abs(rs_dot) < limit)
+    cloth.has_butt_edges = np.any(butt_edges)
+    butt_tri_pairs = []
+    
+    is_butt = np.arange(cloth.eidx.shape[0])[cloth.sew_edges][butt_edges]
+    cloth.is_butt_edge[is_butt] = True
+    cloth.butt_sew_edges = is_butt
+    
+    if cloth.has_butt_edges:
+        cloth.triobm.verts.ensure_lookup_table()
+        for i in cloth.eidx[cloth.sew_edges][butt_edges]:
+            pairs = [[i[1], f.index] for f in cloth.triobm.verts[i[0]].link_faces]
+            pairs2 = [[i[0], f.index] for f in cloth.triobm.verts[i[1]].link_faces]
+            butt_tri_pairs += pairs
+            butt_tri_pairs += pairs2
+        butt_tri_pairs = np.array(butt_tri_pairs, dtype=np.int32)
+    
+    return butt_edges, butt_tri_pairs
+
+
+def sew_force_butt(cloth):
+    """Sews tight end to end where sew edges
+    are perp to vert norms"""
+    if cloth.ob.MC_props.butt_sew_dynamic:    
+        cloth.butt_edges, cloth.butt_tri_pairs = get_butt_edges(cloth)
+    be = cloth.eidx[cloth.butt_sew_edges]
+    bs_co = cloth.co[be]
+    loc = np.mean(bs_co, axis=1)    
+    vec = loc - cloth.co[be[:, 0]]
+    move = vec * cloth.ob.MC_props.butt_sew_force
+    np.add.at(cloth.co, be[:, 0], move)
+    np.add.at(cloth.co, be[:, 1], -move)
+    
+
 def sew_force(cloth):
+    
     field_sew_force(cloth)
     
     if not cloth.sew:
@@ -2887,23 +2962,13 @@ def sew_force(cloth):
     if tl != 0:
         vecs = cloth.co[cloth.sew_fancy_indexer] - cloth.co[cloth.sew_add_indexer]
         l = np.sqrt(np.einsum('ij,ij->i', vecs, vecs))
-        #move_l = (l - tsl)# * cloth.ob.MC_props.sew_force
-        move_l = (l - tl)# * cloth.ob.MC_props.sew_force
+        move_l = (l - tl)
         vecs *= (move_l / l)[:, None]
-
         nn = np.nan_to_num(vecs) * (cloth.ob.MC_props.sew_force * .5)
-        #short = move_l < 0.5
-        #nn[short] *= .1
-        #nn[~short] *= (cloth.ob.MC_props.sew_force * .5)
-
-        #nn = np.nan_to_num(vecs) * (cloth.ob.MC_props.sew_force * .5)
         np.add.at(cloth.co, cloth.sew_add_indexer, nn)
-
         return
 
     cloth.sew_mean[:] = 0.0
-    print(cloth.co.shape)
-    print(cloth.sew_mean.shape)
     np.add.at(cloth.sew_mean, cloth.sew_mean_idx, cloth.co[cloth.all_sew])
     means = cloth.sew_mean / cloth.sew_div
     vecs = (means[cloth.sew_mean_idx] - cloth.co[cloth.all_sew])
@@ -3281,7 +3346,7 @@ def stretch_solve(cloth, stretch=None):
     if stretch is None:
         stretch = cloth.ob.MC_props.stretch * 0.5
     
-    print(stretch, "stretch value")
+    #print(stretch, "stretch value")
     push = cloth.ob.MC_props.push
 
     # !!! Optimize here ============================================
@@ -3892,6 +3957,136 @@ def grid_sim(cloth):
     cloth.ob.MC_props.p1_iterator_1 += 1
 
 
+def initialize_table_flatten(cloth):
+    """For starting or restarting table/hanger flatten"""
+    cloth.ob.data.update()
+    feco = get_co_shape(cloth.ob, "final_enhance")
+    cloth.ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set('co', feco.ravel())
+    cloth.ob.data.update()
+    cloth.co = get_co_shape(cloth.ob, key='MC_current')
+    cloth.select_start[:] = cloth.co
+    cloth.vel_zero[:] = cloth.co
+    cloth.velocity[:] = 0.0
+    cloth.xz_force = np.array([0.00007, 0.00003], dtype=np.float32)
+    cloth.wrinkle_thickness = 3.5
+    cloth.virtual_hang_force = 0.01
+    
+    if not hasattr(cloth, 'flatten_times'):
+        cloth.flatten_times = 0
+    cloth.flat_counter = 0
+    cloth.z_mid = np.mean(cloth.co[:, 2])
+    cloth.y_force = 0.01
+    cloth.ob.MC_props.gravity = 0.0
+    cloth.ob.MC_props.velocity = 0.9
+    cloth.ob.MC_props.user_bend = 0.4
+    cloth.ob.MC_props.user_stretch = 10.0
+    cloth.y_max = np.max(cloth.co[:, 1])
+    cloth.xz_mid = np.mean(cloth.co[:, 0::2], axis=0)
+    xz_dif = cloth.co[:, 0::2] - cloth.xz_mid
+    xz_dots = np.einsum('ij,ij->i', xz_dif, xz_dif)
+    lens = np.sqrt(xz_dots)
+    cloth.center_circle = lens < 1.5
+    cloth.y_flatten = True
+    cloth.flatten_time = time.time()    
+    
+    # hang on nothing experiment --------------
+    # pull on garment with increasing gravity from top to bottom
+    #   where top has zero force.
+    # maybe use select start to reset coordinates?
+    cloth.virtual_hang = np.zeros(cloth.co.shape[0], dtype=np.float32)
+    cloth.virtual_hang_back = np.zeros(cloth.co.shape[0], dtype=np.float32)
+    minz = np.min(cloth.co[:, 2])
+    maxz = np.max(cloth.co[:, 2])
+    z_dist = maxz - minz
+    print(z_dist, "this is z_dist")
+    
+    map = (cloth.co[:, 2] - minz) / z_dist
+    print(np.max(map), np.min(map), "this is map. It should be zero to 1")
+    
+    invert_map = 1 - map
+    
+    cloth.virtual_hang[:] = invert_map * cloth.virtual_hang_force
+    #cloth.virtual_hang_back[:] = map * cloth.virtual_hang_force
+    cloth.virtual_hang_back[:] = np.max(map) * cloth.virtual_hang_force * 0.75
+    
+    if cloth.flatten_times == 1:
+        cloth.xz_force = np.array([0.0001, 0.00003], dtype=np.float32)
+        cloth.y_force = 0.01
+        cloth.ob.MC_props.velocity = 0.9
+        cloth.wrinkle_thickness = 3.2
+        
+    if cloth.flatten_times == 2:
+        cloth.xz_force = np.array([0.0001, 0.00003], dtype=np.float32)
+        cloth.y_force = 0.01
+        cloth.ob.MC_props.velocity = 0.85
+        cloth.ob.MC_props.gravity = -0.005
+        cloth.wrinkle_thickness = 3.7
+
+
+def restart_flatten(cloth, reset=True):
+    keys = cloth.ob.data.shape_keys.key_blocks
+    keys['MC_current'].value = 0.0
+    keys['MC_current'].name = 'flatten_' + str(cloth.flatten_times)
+    mc_key = cloth.ob.shape_key_add(name='MC_current')
+    mc_key.value = 1.0
+    mc_key.relative_key = keys['MC_source']
+    
+    if reset:
+        initialize_table_flatten(cloth)
+    cloth.flatten_times += 1
+
+
+def table_flatten(cloth):
+    """For flattening like laying on a table"""
+    if not hasattr(cloth, "flatten_start"):
+        cloth.flatten_start = True
+        initialize_table_flatten(cloth)
+    
+    # set to zero when flatten is done
+    xz_dif = (cloth.co[:, 0::2] - cloth.xz_mid) * cloth.xz_force
+    cloth.velocity[:, 0::2] += xz_dif
+    
+    if cloth.y_flatten:
+        # ---------- move the garment down so it matches the hanger ----------
+        cloth.velocity[:,2] -= np.max(xz_dif[:, 1])
+        
+        # ---------- manage center circle ----------
+        thickness = np.max(np.abs(cloth.co[:, 1][cloth.center_circle]))
+        print(thickness, "this is thickness")
+        if (thickness < 3.0) | (cloth.flat_counter > 900): # was 900
+            print("stopped on iter:", cloth.flat_counter)
+            print("total time", time.time() - cloth.flatten_time)
+            cloth.y_flatten = False
+            #cloth.ob.MC_props.gravity = -0.01
+            cloth.xz_force = np.array([0.0, 0.0], dtype=np.float32)
+            restart_flatten(cloth, reset=False)
+            cloth.y_finished = cloth.flat_counter
+            
+    if cloth.y_flatten:
+        negative = cloth.co[:, 1] < 0.0
+        print(np.sum(negative), cloth.velocity.shape[0], "flatening???")
+        cloth.velocity[:, 1][negative] += cloth.y_force
+        cloth.velocity[:, 1][~negative] -= cloth.y_force
+        
+        
+    print(cloth.flat_counter)
+    cloth.flat_counter += 1
+
+    print(np.min(cloth.virtual_hang), "min hang")
+    print(np.max(cloth.virtual_hang), "max hang")
+    cloth.velocity[:, 2] -= cloth.virtual_hang
+    cloth.velocity[:, 2] += cloth.virtual_hang_back
+    
+    if not cloth.y_flatten:    
+        thickness = np.max(np.abs(cloth.co[:, 1][cloth.center_circle]))
+        print(thickness)
+        if (thickness > cloth.wrinkle_thickness) | (cloth.flat_counter > cloth.y_finished * 2): # was 1800
+            print("stopped when thickness was more than 0.5 or 1800 iters. iter:", cloth.flat_counter)
+            restart_flatten(cloth)
+            cloth.flatten_finished = True
+    return
+
+
 def spring_basic_no_sw(cloth):
     
     dev_mode = bpy.context.scene.MC_props.dev_mode
@@ -3905,15 +4100,6 @@ def spring_basic_no_sw(cloth):
 
 
     cloth.skip_v_norms = False # so we don't run it more than once (do we need to update it every time after doing multiple collision forces???)
-    if cloth.ob.MC_props.p1_final_enhance:
-        
-        if False:        
-            print("me me me????/")
-            print("me me me????/")
-            print("me me me????/")
-            print("me me me????/")
-            enhance_sim(cloth)
-
 
     if cloth.ob.MC_props.p1_grid:
         grid_sim(cloth)
@@ -3972,8 +4158,11 @@ def spring_basic_no_sw(cloth):
 
     #cloth.velocity[:, 2] += cloth.ob.MC_props.gravity * 0.001
     cloth.velocity += w_grav
-    cloth.co += cloth.velocity
+        
+    if cloth.ob.MC_props.p1_table_flatten:    
+        table_flatten(cloth)
 
+    cloth.co += cloth.velocity
     cloth.vel_zero[:] = cloth.co
 
     #if cloth.ob.MC_props.stretch > 0: # could add a cloth.do_stretch for the stretch vertex group if they are all zero...
@@ -3984,15 +4173,16 @@ def spring_basic_no_sw(cloth):
         #flatten_bend(cloth)
         #update_pins_select(cloth)
 
-    #if False:
-    if dev_mode:
+    if False:
+    #if dev_mode:
         if cloth.do_bend:
             if cloth.ob.MC_props.bend > 0:
                 for i in range(cloth.ob.MC_props.bend_iters):
                     abstract_bend(cloth)
                     update_pins_select(cloth)
     
-    if not dev_mode:
+    #if not dev_mode:
+    if True:
         if cloth.do_bend:
             bend = cloth.ob.MC_props.user_bend
             iters = int(bend // 1) + 1
@@ -4040,9 +4230,11 @@ def spring_basic_no_sw(cloth):
         spring_move = cloth.co - cloth.feedback
         cloth.velocity += spring_move * feedback_val
 
-    if cloth.ob.MC_props.sew_force > 0:
+    if cloth.ob.MC_props.sew_force > 0.0:
         sew_force(cloth)
         update_pins_select(cloth)    
+    if cloth.ob.MC_props.butt_sew_force > 0.0:
+        sew_force_butt(cloth)
 
     rt_(num='stretch time', skip=False, show=True)
     # sewing -------------------
@@ -4116,11 +4308,23 @@ def spring_basic_no_sw(cloth):
                     
         #if cloth.ob.MC_props.p1_cloth:
         #if True:
-    for i in range(cloth.ob.MC_props.extra_bend_iters):
-        abstract_bend(cloth)
-    rt_(num='extra_bend', skip=False)
 
-            
+    
+    extra_bend = cloth.ob.MC_props.extra_bend
+    if extra_bend > 0.0:
+        iters = int(extra_bend // 1) + 1
+        if extra_bend == 0.0:
+            iters = 0
+        extra_bend = 1.0
+        for i in range(iters):
+            if i + 1 == iters:
+                extra_bend = cloth.ob.MC_props.extra_bend % 1
+            abstract_bend(cloth, extra_bend)
+
+    if False:
+        for i in range(cloth.ob.MC_props.extra_bend_iters):
+            abstract_bend(cloth)
+        rt_(num='extra_bend', skip=False)
 
 
     if cloth.ob.MC_props.detangle: # cloth.ob.MC_props.pierce_collide:
@@ -4399,6 +4603,8 @@ def refresh(cloth, skip=False):
 
     if ob.data.is_editmode:
         ob.update_from_editmode()
+    
+    cloth.generic_bool = np.zeros(len(ob.data.vertices), dtype=np.bool) # currently used by p1 same panel sew edges
 
     cloth.p1 = False
     if not skip:
@@ -4454,6 +4660,7 @@ def refresh(cloth, skip=False):
         cloth.selected = np.zeros(cloth.co.shape[0], dtype=np.bool) # keep False if in object mode
 
     cloth.velocity = np.zeros_like(cloth.co)
+    cloth.sc_meaner = np.zeros(cloth.co.shape, dtype=np.float32)
     cloth.vel_zero = np.zeros_like(cloth.co)
     cloth.feedback = np.zeros_like(cloth.co)
     cloth.stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32) # for calculating the weights of the mean
@@ -4470,13 +4677,15 @@ def refresh(cloth, skip=False):
         #if doing_self_collisions:
         cloth.tridex, triobm = get_tridex_2(ob)
         cloth.triobm = triobm
-
+        
+        cloth.is_butt_edge = np.zeros(len(triobm.edges), dtype=np.bool)
+        
         # for offset_cloth_tris:
         cloth.v_norms = np.empty((cloth.co.shape[0], 3), dtype=np.float32)
         cloth.v_norm_indexer1 = np.array(np.hstack([[f.index for f in v.link_faces] for v in triobm.verts]), dtype=np.int32)
         cloth.v_norm_indexer = np.array(np.hstack([[v.index] * len(v.link_faces) for v in triobm.verts]), dtype=np.int32)
         # ---------------------
-        
+
         # edge edge bend ----------------
         ultimate_bend_springs(cloth)
         # edge edge bend ----------------
@@ -4509,6 +4718,18 @@ def refresh(cloth, skip=False):
     # pierce data
     if not skip:
         cloth.eidx = get_sc_edges(ob)
+        cloth.sew_verts = np.zeros(len(cloth.ob.data.vertices), dtype=np.bool)
+        cloth.sew_verts[cloth.eidx[cloth.sew_edges].ravel()] = True
+
+        # might not be using this. Check self_collide, flood and MC_29.
+        boundary_verts = np.array([v.is_boundary for v in cloth.obm.verts], dtype=np.bool)
+        cloth.sew_verts[~boundary_verts] = False
+        cloth.sew_vert_edges = np.any(cloth.sew_verts[cloth.eidx], axis=1)
+        
+        # for end to end sewing ----------------
+        cloth.has_butt_edges = False
+        cloth.butt_edges, cloth.butt_tri_pairs = get_butt_edges(cloth)
+        
         cloth.four_edge_co = np.empty((cloth.eidx.shape[0], 4, 3), dtype=np.float32)
         cloth.pierce_co = np.empty((cloth.eidx.shape[0], 2, 3), dtype=np.float32)
         #cloth.pierce_co2 = np.empty((cloth.eidx.shape[0] * 2, 3), dtype=np.float32)
@@ -5237,6 +5458,11 @@ class McPropsObject(bpy.types.PropertyGroup):
     self_collide:\
     bpy.props.BoolProperty(name="Self Collision", description="Self collisions (Hopefully preventing self intersections. Fingers crossed.)", default=False)
 
+    sc_expand_triangles:\
+    bpy.props.FloatProperty(name="Increase triangle size for collision check",
+        description="Margin around inside_triangle check",
+        default=0.0)
+
     self_collide_margin:\
     bpy.props.FloatProperty(name="Self Collision Margin", description="Self collision margin", default=0.02, min=0, precision=3)
 
@@ -5259,7 +5485,7 @@ class McPropsObject(bpy.types.PropertyGroup):
     flood_bias:\
     bpy.props.IntProperty(name="Search bias",
         description="More than this many linked on one side of the face",
-        default=5, soft_min=1)
+        default=3, soft_min=1)
         
     flood_search_iters:\
     bpy.props.IntProperty(name="Search Iterations",
@@ -5269,7 +5495,17 @@ class McPropsObject(bpy.types.PropertyGroup):
     flood_overshoot:\
     bpy.props.FloatProperty(name="Flood Overshoot",
         description="How far past the face to move",
-        default=0.0, soft_min=0.0, soft_max=2.0)
+        default=0.5, soft_min=0.0, soft_max=2.0)
+
+    flood_skip_sew_edges:\
+    bpy.props.BoolProperty(name="detanlge sew edges",
+        description="Skip detangling on sew edges",
+        default=True)
+
+    flood_debug:\
+    bpy.props.BoolProperty(name="debugging",
+        description="select edges and stuff",
+        default=False)
 
     edge_collide:\
     bpy.props.BoolProperty(name="Edge Collide", description="edges collide against each other in self collisions", default=False)
@@ -5284,7 +5520,7 @@ class McPropsObject(bpy.types.PropertyGroup):
     #bpy.props.FloatProperty(name="Self Collision Velocity Damping", description="Self self collisions reduces velocity", default=1.0, precision=3)
 
     sc_friction:\
-    bpy.props.FloatProperty(name="Self Collision Friction", description="Self self collisions friction", default=0.5, soft_min=0, soft_max=1, precision=3)
+    bpy.props.FloatProperty(name="Self Collision Friction", description="Self self collisions friction", default=0.0, soft_min=0, soft_max=1, precision=3)
 
     shrink_grow:\
     bpy.props.FloatProperty(name="Shrink/Grow", description="Change the target size", default=1.0, soft_min=0, soft_max=1000, precision=3)
@@ -5368,6 +5604,11 @@ class McPropsObject(bpy.types.PropertyGroup):
     bend_iters:\
     bpy.props.IntProperty(name="Bend Iters", description="Number of iterations of bend springs", default=1, min=0, max=1000)#, precision=1)
 
+    extra_bend:\
+    bpy.props.FloatProperty(name="Extra Bend",
+    description="Extra bend after self collide for p1",
+    default=0, min=0, precision=3)
+
     extra_bend_iters:\
     bpy.props.IntProperty(name="Extra Bend Iters", description="Extra bend after self collide for p1", default=0, min=0, max=1000)#, precision=1)
 
@@ -5395,6 +5636,16 @@ class McPropsObject(bpy.types.PropertyGroup):
     bpy.props.FloatProperty(name="Sew Force",
         description="Shrink Sew Edges",
         default=0.1, min=0, max=1, soft_min= -100, soft_max=100, precision=3)
+
+    butt_sew_force:\
+    bpy.props.FloatProperty(name="Sew Force Ends",
+        description="Butt end sewing force",
+        default=0.1, min=0, max=1, soft_min= -100, soft_max=100, precision=3)
+
+    butt_sew_dynamic:\
+    bpy.props.BoolProperty(name="Dynamic Sew Ends",
+        description="Keep recalculating butt ends. Turning off can improve performance slightly",
+        default=True)
 
     # Sewing
     sew_tight:\
@@ -5580,6 +5831,11 @@ class McPropsObject(bpy.types.PropertyGroup):
     p1_final_enhance:\
     bpy.props.BoolProperty(name="p1 final enhance",
         description="For the final enhance in p1",
+        default=False)
+
+    p1_table_flatten:\
+    bpy.props.BoolProperty(name="p1 table flatten",
+        description="For laying garment on table p1",
         default=False)
 
     avatar:\
@@ -6151,6 +6407,13 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
                 row.label(icon='PROP_CON')
                 row.prop(ob.MC_props, "self_collide_margin", text="SC Margin", icon='PROP_CON')
                 row = col.row()
+                #col = layout.column(align=True)
+                if sc.MC_props.dev_mode:
+                    row.scale_y = 0.75
+                    row.label(icon='PROP_CON')
+                    row.prop(ob.MC_props, "sc_expand_triangles", text="Expand Triangles", icon='PROP_CON')
+                
+                row = col.row()
                 row.label(icon='CON_PIVOT')
                 row.scale_y = 0.75
                 row.prop(ob.MC_props, "sc_friction", text="Friction", icon='CON_PIVOT')
@@ -6174,7 +6437,8 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
             if False:    
                 col.prop(ob.MC_props, "detangle", text="Detangle", icon='GRAPH')
             col.prop(ob.MC_props, "flood_detangle", text="Flood Detangle", icon='GRAPH')
-            if ob.MC_props.flood_detangle:
+            #if ob.MC_props.flood_detangle:
+            if True:    
                 row = col.row()
                 row.scale_y = 0.75
                 row.label(icon='CON_PIVOT')
@@ -6191,6 +6455,15 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
                 row.scale_y = 0.75                
                 row.label(icon='CON_PIVOT')
                 row.prop(ob.MC_props, "flood_overshoot", text="Margin", icon='PROP_CON')                
+                row = col.row()
+                row.scale_y = 0.75                
+                row.label(icon='CON_PIVOT')
+                row.prop(ob.MC_props, "flood_skip_sew_edges", text="Skip Sew Edges", icon='PROP_CON')
+                row = col.row()
+                row.scale_y = 0.75                
+                row.label(icon='CON_PIVOT')
+                row.prop(ob.MC_props, "flood_debug", text="dubugging", icon='PROP_CON')
+
             
             if False:    
                 col.prop(ob.MC_props, "edge_collide", text="Eadge Collide", icon='NORMALS_VERTEX_FACE')
@@ -6391,6 +6664,8 @@ class PANEL_PT_modelingClothSewing(PANEL_PT_MC_Master, bpy.types.Panel):
             col.scale_y = 1
             col.label(text='Sewing')
             col.prop(ob.MC_props, "sew_force", text="Sew Force")
+            col.prop(ob.MC_props, "butt_sew_force", text="Sew Ends")
+            col.prop(ob.MC_props, "butt_sew_dynamic", text="Dynamic Ends")
             col.prop(ob.MC_props, "target_sew_length", text="Target Length")
             col.prop(ob.MC_props, "sew_tight", text="Sew Tight")
 
@@ -6457,7 +6732,7 @@ class PANEL_PT_modelingClothSettings(PANEL_PT_MC_Master, bpy.types.Panel):
             if sc.MC_props.dev_mode:
                 col.prop(ob.MC_props, "feedback", text="feedback")
                 col.prop(ob.MC_props, "edge_stretch", text="Springs Across Tri Tips")
-                col.prop(ob.MC_props, "bend_iters", text="bend iters")
+            col.prop(ob.MC_props, "extra_bend", text="extra bend")
             if sc.MC_props.dev_mode:
                 col.prop(ob.MC_props, "extra_bend_iters", text="Extra Bend")
                 col.prop(ob.MC_props, "bend_type", text="Bend Type")
@@ -6834,4 +7109,24 @@ if __name__ == "__main__":
 # !!! main boundary sewing to zero might be something to set as a preference
 # for the p1 stuff it probably makes sense to use the sc margin for everything
 #   then again... that's prolly why the collar seam doesn't sew all the way together.
+
+# !!! biggest problem with flood search is it checks every point against the collision face
+#   instead of against the nearest face to the spreading connected points.
+#   Maybe I could use the self collide boxes to find a nearby face to check?
+#   could also do something like cpom.
+
+
+# might be able to use def eliminate_pairs(cloth) instead of broadcasting in collisions.
+#   would need to create link faces for every vert just like in butt_edges
+#   Maybe I could use a subset of the v t pairs where I'm broadcasting?
+#   Maybe get the v t pairs based on the verts in the box? Might be faster than broadcasting... idk
+
+# can greatly increase the stability of self colliding sew edges where in field by targeting
+#   to sew to the target distance along the normal instead of just a target distance
+#   for the length of the sew edge becase the sew edge could be at an angle
+#   making the vertex want to be too close for self collide.
+#   Maybe I could do this in the self collide code? Move to the vert norm
+#   for this kind of collision? doing it in sew might be better?
+#   maybe do it in sew and collision?
+
 print('--- new ---')

@@ -41,12 +41,22 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs): # could plug thes
 
     w = 1 - (u+v)
     # !!!! needs some thought
-    margin = -0.0
+    #margin = -cloth.ob.MC_props.sc_expand_triangles
     # !!!! ==================
     weights = np.array([w, u, v]).T
     check = (u >= margin) & (v >= margin) & (w >= margin)
     
     return check, weights
+
+
+# universal ---------------
+def eliminate_pairs(ar1, ar2):
+    """Remove pairs from ar1 that are in ar2"""
+    x = np.array(np.random.rand(ar1.shape[1]), dtype=np.float32)
+    y = ar1 @ x
+    z = ar2 @ x
+    booly = np.isin(y, z, invert=True)
+    return ar1[booly], booly
 
 
 def eliminate_duplicate_pairs(ar, sort=True):
@@ -414,6 +424,13 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
             sc.trs += rt.tolist()
     
 
+def compare_sew_v_norms(cloth):
+    """Check sew edges against the vertex norms.
+    If they are perpindicular we probably want
+    to sew tight. Otherwise they are part of a fold...
+    probably..."""
+
+
 def ray_check_oc(sc, ed, trs, cloth, sort_only=False):
     
     """Need to fix selected points by removing them
@@ -423,6 +440,29 @@ def ray_check_oc(sc, ed, trs, cloth, sort_only=False):
     
     eidx = np.array(ed, dtype=np.int32)
     tidx = np.array(trs, dtype=np.int32)
+    s1 = tidx.shape[0]
+    if cloth.has_butt_edges:
+        #print('running')
+        eliminator = np.empty((eidx.shape[0], 2), dtype=np.int32)
+        eliminator[:, 0] = eidx
+        eliminator[:, 1] = tidx
+        new, boo = eliminate_pairs(eliminator, cloth.butt_tri_pairs)
+        #new, boo = eliminate_pairs(eliminator, eliminator[:4])
+        eidx = new[:, 0]
+        tidx = new[:, 1]
+        #for i in eliminator:
+            #print(i)
+        #print(eliminator)
+        #print(cloth.butt_tri_pairs)
+        if False:    
+            if s1 - tidx.shape[0] != 0:
+                print()
+                print()
+                print('different!!!')
+            #print(s1, tidx.shape[0])  
+        #print()
+        #print(tidx.shape[0])
+        #print(s1)
     if sort_only:
         cloth.oct_tris = tidx
         cloth.oct_points = eidx
@@ -432,8 +472,24 @@ def ray_check_oc(sc, ed, trs, cloth, sort_only=False):
     sc.tris[:, :3] = cloth.select_start[cloth.tridex]# - shift)[cloth.tridex]
     sc.tris[:, 3:] = cloth.co[cloth.tridex]# + shift)[cloth.tridex]
          
+    if cloth.ob.MC_props.sew_tight:
+        #pass
+    #if cloth.ob.MC_props.butt_sew_force > 0.0:
+        #print(cloth.sew_verts[ed])
+        cloth.sew_edges
+        ignore = cloth.sew_verts[eidx]
+        eidx = eidx[~ignore]
+        tidx = tidx[~ignore]
+        #when a vert sews an overlap like a fold the sew edge is more or less paralell
+        #to the vert normals
+        #when its end to end its perp to the normals.
+        #so a dot of less than .707 is less than 45. 
+        #We probably want to err on the side of caution so like a dot of 0.25 or less
+        #should mean we can sew all the way and ignore self collide forces on that vert
+        
+        
     e = sc.edges[eidx]
-    t = sc.tris[tidx]
+    t = sc.tris[tidx]        
 
     start_co = e[:, 0]
     co = e[:, 1]
@@ -462,25 +518,33 @@ def ray_check_oc(sc, ed, trs, cloth, sort_only=False):
     new = False
     #new = True
     if new:    
+        #switch = np.sign(dots * start_dots)
+        #in_margin = (abs_dots <= M) | (switch <= 0.0)
+        #start_check, start_weights_1 = inside_triangles(t[:, :3][in_margin], start_co[in_margin], margin= -cloth.ob.MC_props.sc_expand_triangles)        
         switch = np.sign(dots * start_dots)
-        in_margin = (abs_dots <= M) | (switch <= 0.0)
-        start_check, start_weights_1 = inside_triangles(t[:, :3][in_margin], start_co[in_margin], margin= 0.0)        
+        abs_dots = np.abs(dots)
+        in_margin = (abs_dots <= M)
+        direction = M - abs_dots
+        direction *= switch
+    
+        #return
+    else:
+        switch = np.sign(dots * start_dots)
+        direction = np.sign(dots)
+        abs_dots = np.abs(dots)
         
-    
-    
-        return
-    switch = np.sign(dots * start_dots)
-    direction = np.sign(dots)
-    abs_dots = np.abs(dots)
-    
-    # !!! if a point has switched sides, direction has to be reversed !!!    
-    direction *= switch
-    in_margin = (abs_dots <= M) | (switch == -1)
+        # !!! if a point has switched sides, direction has to be reversed !!!    
+        direction *= switch
+        in_margin = (abs_dots <= M) | (switch == -1)
+        #in_margin = (abs_dots <= M)# | (switch == -1)
+
     
     check_1, weights = inside_triangles(t[:, 3:][in_margin], co[in_margin], margin= -0.1)
-    start_check, start_weights_1 = inside_triangles(t[:, :3][in_margin], start_co[in_margin], margin= 0.0)
+    start_check, start_weights_1 = inside_triangles(t[:, :3][in_margin], start_co[in_margin], margin= -cloth.ob.MC_props.sc_expand_triangles)
 
     check = check_1 | start_check
+    #check = check_1# | start_check
+
     #check = check_1 | start_check
     #check[:] = True
     start_weights = start_weights_1[check]
@@ -488,11 +552,30 @@ def ray_check_oc(sc, ed, trs, cloth, sort_only=False):
     weight_plot = t[:, 3:][in_margin][check] * start_weights[:, :, None]
 
     loc = np.sum(weight_plot, axis=1) + ((un[in_margin][check] * M) * direction[in_margin][check][:, None])
+    
+    mean = True
+    if mean:
+        co_idx = eidx[in_margin][check]
+        uni, counts = np.unique(co_idx, return_counts=True)
+        cloth.sc_meaner[:] = 0.0
+        np.add.at(cloth.sc_meaner, co_idx, loc)
+        mean_move = cloth.sc_meaner[uni] / counts[:, None]
+        dif = mean_move - cloth.co[uni]
+        scf = cloth.ob.MC_props.self_collide_force
+
+        cloth.co[uni] += dif * scf
         
+        fr = cloth.ob.MC_props.sc_friction
+        if fr > 0:
+            cloth.velocity[uni] *= (1 - fr)
+        return
+    
+    T = time.time()    
     move = False
     move = True
     if move:    
         co_idx = eidx[in_margin][check]
+        #print(np.sum(co_idx == 722))
         dif = (loc - cloth.co[co_idx])
         uni, inv, counts = np.unique(co_idx, return_inverse=True, return_counts=True)
         ntn = np.nan_to_num(dif / counts[inv][:, None])
@@ -510,7 +593,7 @@ def ray_check_oc(sc, ed, trs, cloth, sort_only=False):
         
         #cloth.velocity[co_idx] *= 0
         #np.subtract.at(cloth.velocity, co_idx, ntn)
-    
+        print(time.time() - T)
         return
     co_idx = eidx[in_margin][check]
 
@@ -567,9 +650,11 @@ class SelfCollide():
         cloth.sc_co[cloth.v_count:] = cloth.co
 
         offset_tris = True
+        #offset_tris = False
         if offset_tris:        
             M = cloth.ob.MC_props.self_collide_margin# * .5
-            shift = cloth.v_norms * M# * 0
+            #shift = cloth.v_norms * M# * 0
+            shift = M# * 0
             self.shift = shift
             tris_six[:, :3] = (cloth.select_start - shift)[cloth.tridex]
             tris_six[:, 3:] = (cloth.co + shift)[cloth.tridex]

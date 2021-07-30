@@ -563,7 +563,7 @@ def ray_check_oc(sc, ed, trs, cloth, sort_only=False):
         dif = mean_move - cloth.co[uni]
         scf = cloth.ob.MC_props.self_collide_force
 
-        cloth.co[uni] += dif * scf
+        cloth.co[uni] += np.nan_to_num(dif * scf)
         
         fr = cloth.ob.MC_props.sc_friction
         if fr > 0:

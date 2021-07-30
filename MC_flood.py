@@ -175,7 +175,7 @@ def self_collisions_mem(sc, cloth=None, mem=False):
 def ray_check_mem(sc, ed, trs, cloth, mem=False):
     global glob_iters
     #margin = cloth.ob.MC_props.self_collide_margin
-    margin = 0.0#cloth.ob.MC_props.self_collide_margin
+    margin = -0.001#cloth.ob.MC_props.self_collide_margin
 
     if mem:
         joined = np.empty((len(ed), 2), dtype=np.int32)
@@ -187,6 +187,13 @@ def ray_check_mem(sc, ed, trs, cloth, mem=False):
     else:        
         eidx = np.array(ed, dtype=np.int32)
         tidx = np.array(trs, dtype=np.int32)
+    
+    if cloth.ob.MC_props.sew_tight:
+        pass
+    if False: # doesn't help because sew boundaries often need to flip
+        ignore = cloth.sew_vert_edges[eidx]
+        eidx = eidx[~ignore]
+        tidx = tidx[~ignore]
         
     e = sc.edges[eidx]
     t = sc.tris[tidx]
@@ -219,7 +226,6 @@ def ray_check_mem(sc, ed, trs, cloth, mem=False):
     check, weights = inside_triangles(rt, plots, margin= 0.0)
     u_norms = norms / np.sqrt(np.einsum('ij,ij->i', norms, norms))[:, None]
     #p_dirs = np.sign(e_dot[through][check])
-    #print(glob_iters)
 
     glob_iters += 1
     if np.any(check):
@@ -234,13 +240,11 @@ def ray_check_mem(sc, ed, trs, cloth, mem=False):
         edge_idx = cloth.peidx[eidx][through][check]#[edpidx]
         p_tris = rt[check]#[edpidx]
         p_tidx = tidx[through][check]#[edpidx]
-        #deselect(cloth.ob, edge_idx, 'edge')
         
-        if cloth.ob.MC_props.p1_final_enhance:    
-        #if True:
+        #if cloth.ob.MC_props.p1_final_enhance:    
+        if cloth.ob.MC_props.flood_debug:
             if cloth.ob.data.is_editmode:
                 se = [e for e in edge_idx if not cloth.sew_edges[e]]
-                #print(se, "this is se")
                 select_edit_mode(cloth.ob, se, type='e', deselect=True, obm=cloth.obm)
                 #select_edit_mode(cloth.ob, edge_idx, type='e', deselect=True, obm=cloth.obm)
                 #select_edit_mode(cloth.ob, [e.index for e in cloth.obm.edges if cloth.sew_edges[e.index]], type='e', deselect=True, obm=cloth.obm)
@@ -248,6 +252,37 @@ def ray_check_mem(sc, ed, trs, cloth, mem=False):
         panel = False
         #panel = True
         if panel:
+            """
+            problems with doing a panel sort:
+                It's exclusive to p1 only working were vertex groups identify panels
+            If the problem is being cause by linked search checking only the
+            collide face:
+                Say a tri on the outside of the cuff has a vert poking
+                through. the linked verts would be on the correct
+                side of the normal and it should work.
+            What if the tri was on the opposite side. Like in the cuff.
+            as the search increased if the sleeve curves around we
+            would find an increasing number of verts on
+            the wrong side of the normal.     
+            
+            
+            What would it take to do the smarter search...
+            Currently I find an edge that passes through a tri
+            
+            
+            issues with panel:
+                Where a panel folds over onto itself the normal is
+                flipped. If the intersecting edge is part
+                of one of these folds it might:
+                    be colliding with a tri in the same panel
+                    be colliding with a tri in a different panel.
+                        in which case it shouldn't make a difference
+                        because we are sorting based on which side
+                        of other panels each vert is on.
+            
+            """
+            
+            
             f = cloth.is_fold[p_tidx]
             #is_fold = np.all(f1, axis=1)
             #tri_verts = cloth.tridex[p_tidx]
@@ -258,57 +293,49 @@ def ray_check_mem(sc, ed, trs, cloth, mem=False):
             #l_final_sides[f] *= -1        
             r_final_sides = cloth.panel_matrix[at, rap] #* is_fold        
             #r_final_sides[f] *= -1
-            #print(r_final_sides.shape, "sides shape")
-            #print(points.shape, "points shape")
 
         movers = []
         moves = []
 
         cloth.obm.verts.ensure_lookup_table()
-
-        #rt_(num="iterating grow")
-        used = []
+        cloth.generic_bool[:] = False # for folded panels/same panel sew edges
+        
         for i in range(points.shape[0]):
             p_edge = edge_idx[i]
-            
-            skip_sew_edges = False
-            #skip_sew_edges = True
-            if skip_sew_edges:
+
+            if cloth.ob.MC_props.flood_skip_sew_edges:
                 if cloth.sew_edges[p_edge]:
                     continue
-            
-            
-            b_test = True
-            #b_test = False
-            if b_test: # trying to figure out a way to use this for edge edge...
-                #if cloth.obm.edges[p_edge].is_boundary:
-                if True:
-                    pti = p_tidx[i]
-                    if cloth.boundary_tris[pti]:
-
-                        tri_verts = cloth.tridex[pti][cloth.v_boundary_bool[pti]]
                         
-                        boundary_link_edges = [[e.index for e in cloth.obm.verts[v].link_edges if e.is_boundary] for v in tri_verts]    
-                        flat_list = [item for sublist in boundary_link_edges for item in sublist]    
-                        ec = cloth.co[cloth.eidx[flat_list]]
-                        elc = ec[:, 0]
-                        erc = ec[:, 1]
-                        #le_vecs = erc - elc
-                        p_ori = cull_plots[i] - elc
-                        
-                        evecs = erc - elc
-                        uev = evecs / np.sqrt(np.einsum('ij,ij->i', evecs, evecs))[:, None]
-                        cpoe = (uev * np.einsum('ij,ij->i', uev, p_ori)[:, None]) + elc
-                        e_moves = cpoe - cull_plots[i]
-                        shortest = np.argmin(np.einsum('ij,ij->i', e_moves, e_moves))
-                        short_moves = e_moves[[shortest, shortest]] * 0.5# * (1 + cloth.ob.MC_props.flood_overshoot) # one for each vert in the edge
-                        moves += short_moves.tolist()
-                        movers += points[i].tolist()
-                        #print(points[i].tolist(), "above")
+            
+            # boundary edge collistion -----------------------
+            pti = p_tidx[i]
+            if cloth.boundary_tris[pti]:
 
-                        # !!! need to test if we should continue !!!
-                        #continue
-                        # probably should not continue because boundaries can get stuck
+                tri_verts = cloth.tridex[pti][cloth.v_boundary_bool[pti]]
+                
+                boundary_link_edges = [[e.index for e in cloth.obm.verts[v].link_edges if e.is_boundary] for v in tri_verts]    
+                flat_list = [item for sublist in boundary_link_edges for item in sublist]    
+                ec = cloth.co[cloth.eidx[flat_list]]
+                elc = ec[:, 0]
+                erc = ec[:, 1]
+                #le_vecs = erc - elc
+                p_ori = cull_plots[i] - elc
+                
+                evecs = erc - elc
+                uev = evecs / np.sqrt(np.einsum('ij,ij->i', evecs, evecs))[:, None]
+                cpoe = (uev * np.einsum('ij,ij->i', uev, p_ori)[:, None]) + elc
+                e_moves = cpoe - cull_plots[i]
+                shortest = np.argmin(np.einsum('ij,ij->i', e_moves, e_moves))
+                short_moves = e_moves[[shortest, shortest]] * 0.5# * (1 + cloth.ob.MC_props.flood_overshoot) # one for each vert in the edge
+                moves += short_moves.tolist()
+                movers += points[i].tolist()
+
+                # !!! need to test if we should continue !!!
+                #continue
+                # probably should not continue because boundaries can get stuck
+                # continue seemed like a bad idea last time I checked
+                # end boundary edge collistion -----------------------
                         
             pe = points[i]
             pt = p_tris[i]
@@ -322,39 +349,34 @@ def ray_check_mem(sc, ed, trs, cloth, mem=False):
                             direction = cloth.same_panel_sew_edges[k].direction
                             if direction != 0.0:
                                 evecs = cull_plots[i] - cloth.co[pe]
-
                                 wrong_side = ((evecs @ pn) * direction) < 0.0
-                                if np.sum(wrong_side) == 1:
-         
-                                    if pe[wrong_side] not in used:
+                                if np.sum(wrong_side) == 1:         
+                                    #print(pe[wrong_side] not in used, "not in used")
+                                    if not cloth.generic_bool[pe[wrong_side]]:
+                                    #if pe[wrong_side] not in used:
                                         t_move = pn * (evecs[wrong_side] @ (pn * 1.01))
                                         #if move.shape[0] != 3:
-                                        #print(move.dtype, "type???")
+
                                         #cloth.co[pe[wrong_side]] += t_move
                                         moves += [t_move.tolist()]
                                         movers += pe[wrong_side].tolist()
-                                        #print(pe[wrong_side].shape, "pe ws shape")
-                                        #print(move.shape, "move shape")
-                                        #print(pe[wrong_side].tolist(), "below")
-                                        #print(move.tolist(), "below")
-                                used += pe[wrong_side].tolist()
-                                    
+
+                                cloth.generic_bool[pe[wrong_side]] = True                                    
                                 continue
+
                         if cloth.panel_types[k] == "outer":
+                            pass
                             # if triangle verts are outer panel the edge
                             #   verts need to move to the underside.
                             # if the tri is part of a fold it's opposite
                             # if the edge vert is in the outer and the tri
                             #   is a different panel the edge needs to move
-                            #   to the outside.
-                        
-                            pass
+                            #   to the outside.                     
                             #continue
             
             if not panel:    
                 idx, summy = get_linked(cloth, pe, limit=cloth.ob.MC_props.flood_search_size, dynamic=True, pt=pt[0], pn=pn)
             #link_vecs = cloth.co[idx] - pt[0]
-            
             # are most on the positive side or the negative side or neither?
             #link_norm_dot = np.einsum('j,ij->i', pn, link_vecs)
             #link_norm_dots = link_vecs @ pn
@@ -372,8 +394,6 @@ def ray_check_mem(sc, ed, trs, cloth, mem=False):
                 summy = lfs
                 ignore = False
 
-            
-            #print(pe, "this is pe")   
             p0nd = (cloth.co[pe[0]] - pt[0]) @ pn
             compare0 = summy * p0nd
             if compare0 < 0:
@@ -397,22 +417,10 @@ def ray_check_mem(sc, ed, trs, cloth, mem=False):
                 moves += [pn * -dist]# + (pn * -cloth.ob.MC_props.flood_overshoot)]
                     
         if len(moves) > 0:    
-            #print(moves)    
-            #print(movers)    
-        
             uni, inv, counts = np.unique(movers, return_inverse=True, return_counts=True)
             ntn = np.nan_to_num(np.array(moves) / counts[inv][:, None])
-            
-            #ntn = np.nan_to_num(moves)
             np.add.at(cloth.co, movers, ntn)
-            #deselect(cloth.ob, edge_idx, 'edge')
-        return
 
-        # panel sort collisions
-        
-        # here we use relationships between panels. 
-        # if we assume the panels solve mostly correctly
-        #   
 
 # ==============================================
 # ==============================================
@@ -495,15 +503,12 @@ def get_linked(cloth, idx, limit=10, dynamic=False, pt=None, pn=None):
 
                     # are most on the positive side or the negative side or neither?
                     link_norm_dot = link_vecs @ pn
-                    
-                    #print(np.sign(flippy))
                     summy = np.sum(np.sign(link_norm_dot))
                     flips = True
                     flips = False
                     if flips:    
                         flippy = np.sign(cloth.v_norms[vboos] @ cloth.v_norms[idx[0]])
                         summy = np.sum(np.sign(link_norm_dot * flippy))
-                        #print(summy, summy2, "different???")
                     
                     if abs(summy) > cloth.ob.MC_props.flood_bias:
                         return np.arange(len(obm.verts))[vboos], summy
@@ -560,7 +565,7 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs): # could plug thes
 
 
 def b2(sc, cloth, count):
-    #print('running b2 self_collisions', count)
+
     if len(sc.big_boxes) == 0:
         print("ran out")
         return
@@ -785,6 +790,15 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     return full, efull, [bounds_8[0][both], bounds_8[1][both]]
 
 
+def eliminate_pairs(ar1, ar2):
+    """Remove pairs from ar1 that are in ar2"""
+    x = np.array(np.random.rand(ar1.shape[1]), dtype=np.float32)
+    y = ar1 @ x
+    z = ar2 @ x
+    booly = np.isin(x, y, invert=True)
+    return ar1[booly], booly
+
+
 def eliminate_duplicate_pairs_keep_mirrors(ar):
     """Finds unique index pairs assuming left
     and right side are different types:
@@ -850,7 +864,6 @@ class PierceCollide():
     
     def __init__(self, cloth):
         
-        #ob = cloth.ob
         # -----------------------
         tridex = cloth.tridex
         # -----------------------
@@ -859,8 +872,7 @@ class PierceCollide():
         testing = False
         testing = True
         if testing:    
-            self.box_max = cloth.ob.MC_props.sc_box_max        
-        
+            self.box_max = cloth.ob.MC_props.sc_box_max
         
         self.tris = cloth.co[tridex]
         self.edges = cloth.pierce_co#[cloth.pc_edges]
@@ -885,16 +897,10 @@ def flood_collisions(cloth):
     #   probably because you get more box overlap with edges
     #   and tris than with points and tris.
     if cloth.ob.MC_props.p1_final_enhance:
-        self_collisions_mem(sc, cloth, mem=True)
-        
+        self_collisions_mem(sc, cloth, mem=True)        
         ed = np.array(sc.ed_shapes)
-        print(np.max(ed), "ed shapes")
         trs = np.array(sc.trs_shapes)
-        print(np.max(trs), "trs shapes")
         brd = np.array(sc.broadcast_shapes)
-        print(np.max(brd, axis=0), "brd shapes")
-        
-        
         ray_check_mem(sc, sc.ees, sc.trs, cloth, mem=True)
         return    
 

@@ -5405,7 +5405,7 @@ def cb_grid(self, context):
     if not ob.type == "MESH":
         return
 
-    border = MC_grid.Border(ob)
+    border = MC_grid.Border(ob, MC_pierce)
     return
     #new = border.redistributed
     #new = MC_grid.redistribute(border.ordered_co[:, :2], grid_size=size, angle=angle)

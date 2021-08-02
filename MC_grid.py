@@ -716,7 +716,11 @@ def get_linked(obm, idx, op=None):
 
 
 def edge_collisions(border):
-    MC_pierce = bpy.data.texts['MC_pierce.py'].as_module()
+    try:    
+        MC_pierce = bpy.data.texts['MC_pierce.py'].as_module()
+    except:
+        from . import MC_pierce
+    
     MC_pierce.detect_collisions(cloth=None, grid=border)
 
     #obm = get_bmesh(border.grid_ob, refresh=True)

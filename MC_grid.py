@@ -719,7 +719,7 @@ def edge_collisions(border):
     #try:    
         #MC_pierce = bpy.data.texts['MC_pierce.py'].as_module()
     #except:
-    from . import MC_pierce
+    from . MC_29 import MC_pierce
     
     MC_pierce.detect_collisions(cloth=None, grid=border)
 

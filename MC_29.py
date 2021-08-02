@@ -2948,7 +2948,8 @@ def sew_force(cloth):
     if not cloth.ob.MC_props.sew_tight: # want to be able to sew boundaries together
         if cloth.ob.MC_props.self_collide:
             if cloth.ob.MC_props.self_collide_margin > tl * 2:
-                if cloth.ob.data.is_editmode:    
+                if False:
+                    #if cloth.ob.data.is_editmode:    
                     print("sew force in boundary set to sc_margin !!!")
                     print("have to cull boundary sew edges in sc and flood !!!")
                     print("drift in sew edges seems to be cause by bend springs")

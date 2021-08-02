@@ -1301,10 +1301,10 @@ def generate_grid_sew_lines():
 class Border():
     name = "Border"
     
-    def __init__(self, ob, make=True, MC_pierce):
+    def __init__(self, ob, make=True, p_mod=MC_pierce):
         # include the object when creating instance
         # -----------------------
-        self.MC_pierce = MC_pierce
+        self.MC_pierce = p_mod
         self.p1 = False
         self.ob = ob
         self.size = ob.MC_props.grid_size

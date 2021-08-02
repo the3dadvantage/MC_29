@@ -113,10 +113,6 @@ def generate_perimeter(grid):
     
     if grid.v_border:
         grid.sew_edgesss = []
-    print()
-    print()
-    print()
-    print("----------------- new start -----------------")
     
     for i in range(iters):    
         seg_sets = move_point_on_path(grid, i, seg_sets)
@@ -191,39 +187,19 @@ def move_point_on_path(grid, idx, seg_sets):
         
         if grid.v_border:
             
-            #print(grid.v_loop[seg[len_idx]], "len idx")
-            
-            # a_vert represents a vert in the new object that is prior
-            # to the location of a new vert added to the redistribute border
-            # the redistribute border is currently just zero through N
-            # I have to find a way to correlate the new grid to the
-            # sew edges in the flapless object. AHHHH!!!!!
-             
-            
-            # so in the friggin border on the new grid... This is making my head hurt
-            # I need lots of sleep to be able to make sense of this crap
-            
-            
             a_vert = grid.v_loop[seg[len_idx]]
             vert = obm.verts[a_vert]
 
             le = [e.index for e in vert.link_edges if len(e.link_faces) == 0]
             lv = [e.other_vert(vert).index for e in vert.link_edges if len(e.link_faces) == 0]
-            
-            #print(le, "this is le")
 
             grid.accumulated_border_count += 1
-            
-            
-            #so now I have the vert in the other panel on the no fold
-            #I also have the vert in the new grid border.
             
             current_border_vert = grid.accumulated_border_count
             for v in lv:
                 if v in grid.sew_relationships:
                     grid.new_sew_edges += [[grid.sew_relationships[v], current_border_vert]]                
                 
-            #grid.sew_relationships['border_verts'] += [current_border_vert]
             three_verts = [e.other_vert(vert).index for e in vert.link_edges if len(e.link_faces) == 1]
                 
             if True:    
@@ -261,12 +237,6 @@ def move_point_on_path(grid, idx, seg_sets):
         
         seg_co_set.append(loc)
 
-        
-        
-        
-        
-        
-
         # start from the beginning because it's easier
         spacing += build
     
@@ -300,10 +270,6 @@ def redistribute(cut_polyline, grid_size=4.0, angle=20, v_border=None):
         grid.new_ob = v_border.new_ob
         grid.new_obm = v_border.new_obm
         grid.sew_relationships = v_border.sew_relationships
-        #if v_border.iter_count == 1:    
-            #print(v_border.iter_count, "did we do this more than once???")
-            #print(v_border.iter_count, "did we do this more than once???")
-            #print(v_border.iter_count, "did we do this more than once???")
         grid.accumulated_border_count = v_border.accumulated_border_count
         grid.new_sew_edges = v_border.new_sew_edges
         grid.test_attritbute = v_border.test_attritbute
@@ -318,14 +284,7 @@ def redistribute(cut_polyline, grid_size=4.0, angle=20, v_border=None):
     grid.size = grid_size
     grid.seg_vecs = [] # gets filled by the function below
     grid.seg_lengths = [] # gets filled by the function below
-    new_co = np.empty((0,3), dtype=np.float32)    
-    
-
-    #deselect(v_border.new_ob, sel=np.array(grid.v_loop)[grid.segments[-1]], type='vert')
-    #deselect(v_border.new_ob, sel=grid.v_loop, type='vert')
-    #print(len(grid.new_obm.verts), "how many verts")
-    #print(grid.segments[0], 'segments zero') 
-    #print(np.array(v_loop)[grid.segments[0]], 'segments zero') 
+    new_co = np.empty((0,3), dtype=np.float32)
     
     # create points for every segment between sharps --------------------
     #for i in range(iters):
@@ -369,12 +328,18 @@ def make_objects(border, ob=None):
 
     grid = link_mesh(verts=new.tolist(), edges=new_ed, faces=[], name=name, ob=mob)
     grid2 = link_mesh(verts=border.grid_co.tolist(), edges=border.grid_edges, faces=faces, name=grid_name, ob=gob)
-
+    
     grid.matrix_world = ob.matrix_world
     grid2.matrix_world = ob.matrix_world
 
     border.border_ob = grid
     border.grid_ob = grid2
+    border.grid_obm = get_bmesh(border.grid_ob, refresh=True)
+
+    veidx = [[e.verts[0].index, e.verts[1].index] for e in border.grid_obm.edges]
+    border.grid_edges = veidx
+    border.g_edge_co = border.grid_co[border.grid_edges]
+
     
 
 def link_mesh(verts, edges, faces, name='name', ob=None):
@@ -612,8 +577,8 @@ def generate_grid(border):
     
     border.cols_rows = (int(segs[1]), int(segs[0]), 3)
 
-    x_vals = np.linspace(min[0], max[0], segs[0])
-    y_vals = np.linspace(min[1], max[1], segs[1])
+    x_vals = np.linspace(min[0], max[0], int(segs[0]))
+    y_vals = np.linspace(min[1], max[1], int(segs[1]))
     grid = np.meshgrid(x_vals, y_vals)
 
     lr_shape = grid[0].shape[0]
@@ -754,29 +719,36 @@ def edge_collisions(border):
     MC_pierce = bpy.data.texts['MC_pierce.py'].as_module()
     MC_pierce.detect_collisions(cloth=None, grid=border)
 
-    obm = get_bmesh(border.grid_ob, refresh=True)
-
+    #obm = get_bmesh(border.grid_ob, refresh=True)
+    obm = border.grid_obm
+    
     # find the edge collisions and delete collided edges    
     paired = np.zeros((border.eidx.shape[0], 2), dtype=np.int32)
+
     paired[:, 0] = border.eidx
     paired[:, 1] = border.tidx
     
     ar, index = eliminate_duplicate_pairs(paired)
+    ar = paired
     
     b = border.b_edge_co[ar[:, 0]]
     g = border.g_edge_co[ar[:, 1]]    
 
+    #b = border.b_edge_co[border.eidx]
+    #g = border.g_edge_co[border.tidx]
+    
     b1 = b[:, 0][:, :2]
     b2 = b[:, 1][:, :2]
     g1 = g[:, 0][:, :2]
     g2 = g[:, 1][:, :2]
             
     hits, boolies = edges_edges_intersect_2d(b1,b2, g1,g2, intersect=True)
+    boolies = new_intersect(b1,b2, g1,g2)
 
     border.collide_locs = hits[boolies]
     border.collide_edges = ar[:, 1][boolies]
     uni_ed = np.unique(border.collide_edges)
-    
+
     geom = [obm.edges[e] for e in uni_ed]
     bmesh.ops.delete(obm, geom=geom, context='EDGES')
     
@@ -799,13 +771,14 @@ def edge_collisions(border):
             break
 
         v2 = rem[0]
+        
         out_in = cull_outside(border, verts=[v2])
+        deselect(border.grid_ob, v2)
         l2 = get_linked(obm, v2)
 
         if out_in:
             del_bool[l2] = True
         idx_bool[l2] = False
-
     verts = [obm.verts[i] for i in vidx[del_bool]]
     bmesh.ops.delete(obm, geom=verts)
     
@@ -830,49 +803,19 @@ def edge_collisions(border):
 def cull_outside(border, verts=None):
     """Finds if points are inside a polyline"""
     co = border.grid_co
-    if verts is None:
-        border.cull_verts[co[:, 1] > border.box_max[1]] = True
-        border.cull_verts[co[:, 1] < border.box_min[1]] = True
-        border.cull_verts[co[:, 0] > border.box_max[0]] = True
-        # -------------------------------------
-        cull_1 = border.cull_idxer[~border.cull_verts]
-    else:
-        cull_1 = verts
-
-    e_y = border.b_edge_co[:,:, 1]
-    e_y_min = np.min(e_y, axis=1)
-    e_y_max = np.max(e_y, axis=1)
-
-    for idx in cull_1:
-        c = border.grid_co[idx]
-        in_y = (c[1] > e_y_min) & (c[1] < e_y_max)
-        eds = border.b_edge_co[in_y]
-        if c[0] <= np.min(eds[:, 0]):
-            if verts is not None:
-                return True
-            border.cull_verts[idx] = True
-            continue
-        if c[0] >= np.max(eds[:, 0]):
-            if verts is not None:
-                return True
-            border.cull_verts[idx] = True
-            continue
-        
-        # Nice readable code for checking
-        #    if a point is inside the polyline
-        ed_co_in_y = border.b_edge_co[in_y]
-        vecs = ed_co_in_y[:, 1] - ed_co_in_y[:, 0]
-        y_dif = c[1] - ed_co_in_y[:, 0][:,1]
-        div = y_dif / vecs[:, 1]
-        x_shift = vecs[:, 0] * div
-        new_x = ed_co_in_y[:, 0][:, 0] + x_shift
-        right_side = np.sum(new_x > c[0])
-        if verts is None:
-            if right_side % 2 == 0:
-                border.cull_verts[idx] = True
-                continue        
-        else:
-            return right_side % 2 == 0
+    
+    bb_max = np.max(co, axis=0)
+    eco = border.b_edge_co[:, :, :2]
+    
+    a = np.empty((eco.shape[0], 2), dtype=np.float32)
+    a[:] = co[verts[0]][:2] 
+    b = np.empty((eco.shape[0], 2), dtype=np.float32)
+    b[:] = bb_max[:2] 
+    c = eco[:, 0]
+    d = eco[:, 1]
+    
+    ne = new_intersect(a, b, eco[:, 0], eco[:, 1])
+    return np.sum(ne) % 2 == 0
 
 
 def loner_perfect(v, v1, v2, fill):
@@ -1477,13 +1420,10 @@ class V_Border():
                 
                 idx += (g[0] + g[1])
                 
-
             npfv = np.array(grid.sew_relationships['no_fold_verts'])
             nptv = np.array(grid.sew_relationships['three_verts'])
             npbv = np.array(total_b_verts)
             bool = np.zeros(npfv.shape[0], dtype=np.bool)
-            
-            #print(grid.sew_relationships['three_verts'])
             
             other_verts = []
             new_edges = []
@@ -1491,31 +1431,15 @@ class V_Border():
                 bool[:] = False
                 vert = self.new_obm.verts[i]
                 lv = [e.other_vert(vert).index for e in vert.link_edges if len(e.link_faces) == 0]
-                #print(len(lv), "how many verts here")
                 other_verts += lv
                 
-                #print(nptv.shape, "shape should be n x 3")
-                #print(nptv.shape, "shape should be n x 3")
-                #print(nptv.shape, "shape should be n x 3")
                 for v in lv:
                     bool[np.any(nptv == v, axis=1)] = True
-
-                #print(np.sum(bool), "bool sum")    
                     
                 match = npbv[bool]
-                #print(match)
-                for m in match:
-                    new_edges += [[j, m]]
-                
-                #print(i, j, "i j")
 
-            #print(new_edges, "this is new edges")
-            #border.grid_ob
-              
+                for m in match:
+                    new_edges += [[j, m]]              
                 
             ob = link_mesh(grid.full_vertices, edges=new_edges, faces=grid.full_faces, name='name', ob=ob)
             grid.new_grid_ob = ob
-            #deselect(ob, total_b_verts)
-            #deselect(self.new_ob, grid.sew_relationships['no_fold_verts'])
-            #deselect(self.new_ob, other_verts)
-            

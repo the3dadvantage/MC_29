@@ -88,6 +88,7 @@ try:
         MC_edge_collide = bpy.data.texts['MC_edge_collide.py'].as_module()
         MC_flood = bpy.data.texts['MC_flood.py'].as_module()
         MC_grid = bpy.data.texts['MC_grid.py'].as_module()
+        MC_grid.MC_pierce = MC_pierce
         #fold_faces = bpy.data.texts['fold_faces.py'].as_module()
     except:
         from garments_render.modeling_cloth import MC_object_collision
@@ -108,6 +109,7 @@ try:
     from . import MC_flood
     from . import MC_edge_collide
     from . import MC_grid
+    MC_grid.MC_pierce = MC_pierce
 except ImportError:
     pass
 

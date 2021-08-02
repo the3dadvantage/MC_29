@@ -721,7 +721,7 @@ def edge_collisions(border):
     #except:
     #from . MC_29 import MC_pierce
     
-    MC_pierce.detect_collisions(cloth=None, grid=border)
+    border.MC_pierce.detect_collisions(cloth=None, grid=border)
 
     #obm = get_bmesh(border.grid_ob, refresh=True)
     obm = border.grid_obm
@@ -1301,9 +1301,10 @@ def generate_grid_sew_lines():
 class Border():
     name = "Border"
     
-    def __init__(self, ob, make=True):
+    def __init__(self, ob, make=True, MC_pierce):
         # include the object when creating instance
         # -----------------------
+        self.MC_pierce = MC_pierce
         self.p1 = False
         self.ob = ob
         self.size = ob.MC_props.grid_size

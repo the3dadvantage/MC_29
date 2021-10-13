@@ -196,8 +196,8 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     if idx is None:
         idx = cloth.sc_indexer
     if eidx is None:    
-        eidx = cloth.sc_eidx
-
+        eidx = cloth.verts_idx
+        
     idx = np.array(idx, dtype=np.int32)
     eidx = np.array(eidx, dtype=np.int32)
 

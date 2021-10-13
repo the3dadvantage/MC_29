@@ -88,6 +88,7 @@ try:
         MC_edge_collide = bpy.data.texts['MC_edge_collide.py'].as_module()
         MC_flood = bpy.data.texts['MC_flood.py'].as_module()
         MC_grid = bpy.data.texts['MC_grid.py'].as_module()
+        MC_indent_seams = bpy.data.texts['MC_indent_seams.py'].as_module()
         #fold_faces = bpy.data.texts['fold_faces.py'].as_module()
     except:
         from garments_render.modeling_cloth import MC_object_collision
@@ -96,6 +97,7 @@ try:
         from garments_render.modeling_cloth import MC_flood
         from garments_render.modeling_cloth import MC_edge_collide
         from garments_render.modeling_cloth import MC_grid
+        from garments_render.modeling_cloth import MC_indent_seams
         pass
 
 except ImportError:
@@ -108,6 +110,7 @@ try:
     from . import MC_flood
     from . import MC_edge_collide
     from . import MC_grid
+    from . import MC_indent_seams
 except ImportError:
     pass
 
@@ -414,9 +417,8 @@ def get_panel_layer_order(cloth, bias=5):
         v1_loc = pr_co[v1]
         vec = v1_loc - v0_loc
         v.dots = np.einsum('ij,ij->i', v_norms[v1], vec)
-        acc = np.sum(v.dots)        
         v.direction = 0.0
-        acc = np.sum(v.dots)
+        acc = np.sum(np.nan_to_num(v.dots))
         if abs(acc) > bias:
             v.direction = np.sign(acc)
             
@@ -431,11 +433,11 @@ def get_panel_layer_order(cloth, bias=5):
     #cloth.sew_verts = np.zeros(len(cloth.ob.data.vertices), dtype=np.bool)
     #cloth.sew_verts[cloth.eidx[].ravel()] = True
     
-    vert_indexer = np.arange(len(cloth.ob.data.vertices))
+    #vert_indexer = np.arange(len(cloth.ob.data.vertices))
     for k, v in cloth.panel_bools.items():
         edges = same_panel_sew_edges[k].edges
         spse_verts = np.unique(cloth.eidx[edges].ravel())
-        verts = vert_indexer[v]
+        verts = cloth.verts_idx[v]
 
         if spse_verts.shape[0] > 0:
             if verts.shape[0] > 0:
@@ -1407,7 +1409,6 @@ def get_co_edit(ob, ar=None, key='MC_current'):
     if ar is None:
         c = len(ob.data.vertices)
         ar = np.empty((c, 3), dtype=np.float32)
-    #ob.data.vertices.foreach_get('co', ar.ravel())
     ob.data.shape_keys.key_blocks[key].data.foreach_get('co', ar.ravel())
     return ar
 
@@ -2029,8 +2030,7 @@ def get_linked(cloth, idx, limit=9, pt=None, pn=None):
         if np.sum(vboos) >= limit:
             escape = True    
             
-    idxer = np.arange(len(obm.verts))[vboos]
-    return idxer
+    return cloth.verts_idx[vboos]
 
 
 class V_bend():
@@ -2353,6 +2353,33 @@ def edge_stretch_solve(cloth, stretch=None):
     np.add.at(cloth.co, cloth.flat_ebs, move)
     #divs = cloth.es_div[cloth.flat_ebs] / cloth.es_accumulator
     
+
+def rot_bend(cloth):
+    """
+    Each edge with two or more n-gons can be
+    a bend axis.
+    The normals of the two n-gons give us the
+    source and current angle.
+    Separate the n-gons and rotate them around
+    their center of mass.
+    Using either the first or second vert of
+    the axis edge in each seperated n-gon get
+    a direction for the two n-gons to move 
+    towards or away from each other.
+    
+    It's likely this model would be more stable
+    if the rotation was attenuated rather than
+    simply attenuating the linear motion between
+    the current location of the points in the
+    n-gons and the points in the rotated and
+    moved n-gons.
+    
+    Perhaps attenuating the rotation and the
+    linear move would both be needed
+    """    
+
+    pass
+
 
 # ============================================================ #
 #                   precalculated data                         #
@@ -2948,8 +2975,7 @@ def sew_force(cloth):
     if not cloth.ob.MC_props.sew_tight: # want to be able to sew boundaries together
         if cloth.ob.MC_props.self_collide:
             if cloth.ob.MC_props.self_collide_margin > tl * 2:
-                if False:
-                    #if cloth.ob.data.is_editmode:    
+                if cloth.ob.data.is_editmode:    
                     print("sew force in boundary set to sc_margin !!!")
                     print("have to cull boundary sew edges in sc and flood !!!")
                     print("drift in sew edges seems to be cause by bend springs")
@@ -3170,11 +3196,11 @@ class Collider():
         cloth.static = False
         cloth.fcs = fcs
         cloth.oc_tris_six = np.empty((oc_total_tridex.shape[0], 6, 3), dtype=np.float32)
-        cloth.oc_eidx = np.arange(len(cloth.ob.data.vertices), dtype=np.int32)
-        cloth.traveling_edge_co = np.empty((cloth.co.shape[0], 2, 3), dtype=np.float32)
+        #cloth.oc_eidx = np.arange(len(cloth.ob.data.vertices), dtype=np.int32)
+        #cloth.traveling_edge_co = np.empty((cloth.co.shape[0], 2, 3), dtype=np.float32)
 
         # !!! not currently using this. Need to research total object bounds speed difference
-        cloth.tris6_bool = np.ones(cloth.oc_total_tridex.shape[0], dtype=np.bool)
+        # cloth.tris6_bool = np.ones(cloth.oc_total_tridex.shape[0], dtype=np.bool)
 
 
 # cloth instance ---------------
@@ -3970,13 +3996,13 @@ def initialize_table_flatten(cloth):
     cloth.velocity[:] = 0.0
     cloth.xz_force = np.array([0.00007, 0.00003], dtype=np.float32)
     cloth.wrinkle_thickness = 3.5
-    cloth.virtual_hang_force = 0.01
+    cloth.virtual_hang_force = 0.001
     
     if not hasattr(cloth, 'flatten_times'):
         cloth.flatten_times = 0
     cloth.flat_counter = 0
     cloth.z_mid = np.mean(cloth.co[:, 2])
-    cloth.y_force = 0.01
+    cloth.y_force = 0.005
     cloth.ob.MC_props.gravity = 0.0
     cloth.ob.MC_props.velocity = 0.9
     cloth.ob.MC_props.user_bend = 0.4
@@ -4017,11 +4043,18 @@ def initialize_table_flatten(cloth):
         cloth.wrinkle_thickness = 3.2
         
     if cloth.flatten_times == 2:
-        cloth.xz_force = np.array([0.0001, 0.00003], dtype=np.float32)
+        cloth.xz_force = np.array([0.0001, 0.00001], dtype=np.float32)
         cloth.y_force = 0.01
         cloth.ob.MC_props.velocity = 0.85
         cloth.ob.MC_props.gravity = -0.005
         cloth.wrinkle_thickness = 3.7
+
+    # overriding
+    if True:
+        cloth.xz_force = np.array([0.0001, 0.00001], dtype=np.float32)
+        cloth.y_force = 0.002
+        cloth.ob.MC_props.velocity = 0.9
+        cloth.wrinkle_thickness = 3.2
 
 
 def restart_flatten(cloth, reset=True):
@@ -4069,15 +4102,14 @@ def table_flatten(cloth):
         cloth.velocity[:, 1][negative] += cloth.y_force
         cloth.velocity[:, 1][~negative] -= cloth.y_force
         
+
+    cloth.velocity[:, 2] -= cloth.virtual_hang
+    cloth.velocity[:, 2] += cloth.virtual_hang_back * 1.01
+        
         
     print(cloth.flat_counter)
     cloth.flat_counter += 1
 
-    print(np.min(cloth.virtual_hang), "min hang")
-    print(np.max(cloth.virtual_hang), "max hang")
-    cloth.velocity[:, 2] -= cloth.virtual_hang
-    cloth.velocity[:, 2] += cloth.virtual_hang_back
-    
     if not cloth.y_flatten:    
         thickness = np.max(np.abs(cloth.co[:, 1][cloth.center_circle]))
         print(thickness)
@@ -4085,7 +4117,7 @@ def table_flatten(cloth):
             print("stopped when thickness was more than 0.5 or 1800 iters. iter:", cloth.flat_counter)
             restart_flatten(cloth)
             cloth.flatten_finished = True
-    return
+            cloth.ob.MC_props.continuous = False
 
 
 def spring_basic_no_sw(cloth):
@@ -4149,40 +4181,24 @@ def spring_basic_no_sw(cloth):
             return
 
     cloth.select_start[:] = cloth.co
-    feedback_val = cloth.ob.MC_props.feedback
     # start adding forces -------------------------
-
+    
+    # forces added to velocity before adding to co
     inflate_and_wind(cloth)
 
     grav = np.array([0.0, 0.0, cloth.ob.MC_props.gravity * 0.001])
     w_grav = revert_rotation(cloth.ob, [grav])
 
-    #cloth.velocity[:, 2] += cloth.ob.MC_props.gravity * 0.001
     cloth.velocity += w_grav
-        
+
     if cloth.ob.MC_props.p1_table_flatten:    
         table_flatten(cloth)
-
+        
     cloth.co += cloth.velocity
     cloth.vel_zero[:] = cloth.co
 
-    #if cloth.ob.MC_props.stretch > 0: # could add a cloth.do_stretch for the stretch vertex group if they are all zero...
-    #if not cloth.ob.MC_props.self_collide: # put this after self collision
     rt_(num=None)
 
-    #for i in range(cloth.ob.MC_props.bend_iters):
-        #flatten_bend(cloth)
-        #update_pins_select(cloth)
-
-    if False:
-    #if dev_mode:
-        if cloth.do_bend:
-            if cloth.ob.MC_props.bend > 0:
-                for i in range(cloth.ob.MC_props.bend_iters):
-                    abstract_bend(cloth)
-                    update_pins_select(cloth)
-    
-    #if not dev_mode:
     if True:
         if cloth.do_bend:
             bend = cloth.ob.MC_props.user_bend
@@ -4197,11 +4213,7 @@ def spring_basic_no_sw(cloth):
                     bend = cloth.ob.MC_props.user_bend % 1
                 abstract_bend(cloth, bend)
                 update_pins_select(cloth)
-          
-         
-    #rt_('bend spring time', skip=False, show=True)
-    rt_('', skip=False, show=True)
-    cloth.feedback[:] = cloth.co
+    
     if dev_mode:    
         if cloth.ob.MC_props.stretch > 0:
             for i in range(cloth.ob.MC_props.stretch_iters):
@@ -4211,9 +4223,7 @@ def spring_basic_no_sw(cloth):
                     stretch_solve(cloth)
                 update_pins_select(cloth)
 
-    #if not dev_mode:
     if not dev_mode:
-
         u_s = cloth.ob.MC_props.user_stretch
         iters = int(u_s // 1) + 1
         if u_s == 0.0:
@@ -4226,16 +4236,33 @@ def spring_basic_no_sw(cloth):
                 edge_stretch_solve(cloth, u_s)
             else:    
                 stretch_solve(cloth, u_s * 0.5)
+            
+            if cloth.ob.MC_props.sew_force > 0.0:
+                sf = cloth.ob.MC_props.sew_force
+                cloth.ob.MC_props.sew_force = sf / cloth.ob.MC_props.user_stretch
+                sew_force(cloth)
+                cloth.ob.MC_props.sew_force = sf
+                
+            if cloth.ob.MC_props.butt_sew_force > 0.0:
+                bsf = cloth.ob.MC_props.butt_sew_force
+                cloth.ob.MC_props.butt_sew_force = bsf / cloth.ob.MC_props.user_stretch
+                sew_force_butt(cloth)
+                cloth.ob.MC_props.butt_sew_force = bsf
+
             update_pins_select(cloth)
 
+    feedback_val = cloth.ob.MC_props.feedback        
+    if feedback_val != 0:
         spring_move = cloth.co - cloth.feedback
         cloth.velocity += spring_move * feedback_val
 
     if cloth.ob.MC_props.sew_force > 0.0:
         sew_force(cloth)
-        update_pins_select(cloth)    
+        update_pins_select(cloth)
+
     if cloth.ob.MC_props.butt_sew_force > 0.0:
         sew_force_butt(cloth)
+        update_pins_select(cloth)    
 
     rt_(num='stretch time', skip=False, show=True)
     # sewing -------------------
@@ -4247,6 +4274,7 @@ def spring_basic_no_sw(cloth):
     # surface ------------------
  
     #v_move = cloth.co - cloth.vel_zero
+    cloth.feedback[:] = cloth.co
 
     if cloth.ob.MC_props.detect_collisions:
         ob_collide(cloth)
@@ -4322,38 +4350,34 @@ def spring_basic_no_sw(cloth):
                 extra_bend = cloth.ob.MC_props.extra_bend % 1
             abstract_bend(cloth, extra_bend)
 
-    if False:
-        for i in range(cloth.ob.MC_props.extra_bend_iters):
-            abstract_bend(cloth)
-        rt_(num='extra_bend', skip=False)
-
-
     if cloth.ob.MC_props.detangle: # cloth.ob.MC_props.pierce_collide:
         pierce_collide(cloth)
 
-
     if cloth.ob.MC_props.edge_collide:
         edge_collide(cloth)
-
-    #if cloth.ob.MC_props.wrap_force != 0:
-        #if cloth.wrap_force is not None:
-            #cloth.co += cloth.wrap_force * cloth.ob.MC_props.wrap_force
     
-    if False:
-        if cloth.ob.MC_props.sew_force > 0:
-            sew_force(cloth)
-            update_pins_select(cloth)
-
     v_move = cloth.co - cloth.vel_zero
     cloth.velocity += v_move
     cloth.velocity *= cloth.ob.MC_props.velocity
 
     cloth.velocity *= 1 - cloth.drag
-    #cloth.velocity[:,2] += cloth.ob.MC_props.gravity * 0.001 # so after *= vel so it can still fall at zero vel
-    #inflate_and_wind(cloth)
-
+    
+    total_move = cloth.co - cloth.feedback
+    
+    if cloth.ob.MC_props.p1_table_flatten:
+        vel_len = np.einsum('ij,ij->i', cloth.velocity, cloth.velocity)
+        limit = 0.4
+        over = vel_len > limit
+        if np.any(over):
+            print(np.max(vel_len), "max vel")
+            print()
+            print()
+            print()
+            print()
+            print("--- over limit !!! ---")
+            cloth.velocity[over] = 0.0
     # keep this !!! for static friction in MC_object_collision.py
-    np.einsum('ij,ij->i', cloth.velocity, cloth.velocity, out=cloth.move_dist)
+    np.einsum('ij,ij->i', total_move, total_move, out=cloth.move_dist)
     # keep this !!!
 
     #cloth.co[cloth.selected] = cloth.select_start[cloth.selected]
@@ -4596,16 +4620,19 @@ def update_cloth(type=0):
 def refresh(cloth, skip=False):
 
     ob = cloth.ob
-
-    cloth.source_co = get_co_shape(ob, key='MC_source', ar=None)
-
-    cloth.wrap_force = None
-    cloth.last_cpm = None # last closest point on mesh (for popping in and out of edit mode)
-
+    if ob.name.endswith('_new_mc_grid'):
+        ob.name = ob.name + '_cloth'
     if ob.data.is_editmode:
         ob.update_from_editmode()
     
-    cloth.generic_bool = np.zeros(len(ob.data.vertices), dtype=np.bool) # currently used by p1 same panel sew edges
+    cloth.v_count = len(ob.data.vertices)
+    cloth.obm = get_bmesh(ob, refresh=True)
+    cloth.source_co = get_co_shape(ob, key='MC_source', ar=None)
+    cloth.generic_bool = np.zeros(cloth.v_count, dtype=np.bool) # currently used by p1 same panel sew edges
+    cloth.verts_idx = np.arange(cloth.v_count)
+    
+    cloth.wrap_force = None
+    cloth.last_cpm = None # last closest point on mesh (for popping in and out of edit mode)
 
     cloth.p1 = False
     if not skip:
@@ -4621,9 +4648,6 @@ def refresh(cloth, skip=False):
         cloth.mode = None
     cloth.undo = False
 
-    cloth.v_count = len(ob.data.vertices)
-    v_count = cloth.v_count
-    cloth.obm = get_bmesh(ob, refresh=True)
     cloth.sew_edges = np.array([len(e.link_faces) == 0 for e in cloth.obm.edges], dtype=np.bool)
     #noise = np.array(np.random.random((cloth.v_count, 3)) * 0.00001, dtype=np.float32)
 
@@ -4634,7 +4658,7 @@ def refresh(cloth, skip=False):
         manage_vertex_groups(cloth) # bend and stretch springs created here
         # slowdowns ------------------
     
-    cloth.move_dist = np.zeros(v_count, dtype=np.float32) # used by static friction
+    cloth.move_dist = np.zeros(cloth.v_count, dtype=np.float32) # used by static friction
     cloth.pin_arr = np.copy(cloth.co)
     cloth.geometry = get_mesh_counts(ob, cloth.obm)
 
@@ -4652,24 +4676,23 @@ def refresh(cloth, skip=False):
         cloth.wco = np.copy(cloth.co)
         apply_in_place(cloth.ob, cloth.wco)
 
-    cloth.select_start = np.copy(cloth.co)
-    cloth.stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
 
     if cloth.ob.data.is_editmode:
         cloth.selected = np.array([v.select for v in cloth.obm.verts])
     else:
-        cloth.selected = np.zeros(cloth.co.shape[0], dtype=np.bool) # keep False if in object mode
+        cloth.selected = np.zeros(cloth.v_count, dtype=np.bool) # keep False if in object mode
 
+    cloth.select_start = np.copy(cloth.co)
     cloth.velocity = np.zeros_like(cloth.co)
-    cloth.sc_meaner = np.zeros(cloth.co.shape, dtype=np.float32)
+    cloth.sc_meaner = np.zeros_like(cloth.co)
     cloth.vel_zero = np.zeros_like(cloth.co)
     cloth.feedback = np.zeros_like(cloth.co)
-    cloth.stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32) # for calculating the weights of the mean
-    cloth.bend_stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32) # for calculating the weights of the mean
-    cloth.total_tridex = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32) # for calculating the weights of the mean
-    cloth.measure_dot = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32) # for calculating the weights of the mean
-    cloth.measure_length = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32) # for calculating the weights of the mean
-    cloth.measure_cv = np.zeros((cloth.basic_v_fancy.shape[0], 3), dtype=np.float32) # for calculating the weights of the mean
+    cloth.stretch_array = np.zeros(cloth.v_count, dtype=np.float32) # for calculating the weights of the mean
+    cloth.bend_stretch_array = np.zeros(cloth.v_count, dtype=np.float32)
+    cloth.total_tridex = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32)
+    cloth.measure_dot = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32)
+    cloth.measure_length = np.zeros(cloth.basic_v_fancy.shape[0], dtype=np.float32)
+    cloth.measure_cv = np.zeros((cloth.basic_v_fancy.shape[0], 3), dtype=np.float32)
 
     if not skip:
         cloth.vdl = stretch_springs_basic(cloth, cloth.target)
@@ -4682,22 +4705,23 @@ def refresh(cloth, skip=False):
         cloth.is_butt_edge = np.zeros(len(triobm.edges), dtype=np.bool)
         
         # for offset_cloth_tris:
-        cloth.v_norms = np.empty((cloth.co.shape[0], 3), dtype=np.float32)
+        cloth.v_norms = np.empty_like(cloth.co)
         cloth.v_norm_indexer1 = np.array(np.hstack([[f.index for f in v.link_faces] for v in triobm.verts]), dtype=np.int32)
         cloth.v_norm_indexer = np.array(np.hstack([[v.index] * len(v.link_faces) for v in triobm.verts]), dtype=np.int32)
         # ---------------------
-
-        # edge edge bend ----------------
-        ultimate_bend_springs(cloth)
-        # edge edge bend ----------------
         
-        # flatten bend ----------------
-        get_flatten_springs(cloth)
-        # flatten bend ----------------
-        
-        # v bend ----------------
-        v_bend_springs(cloth)
-        # v bend ----------------
+        if bpy.context.scene.MC_props.dev_mode:
+            # edge edge bend ----------------
+            ultimate_bend_springs(cloth)
+            # edge edge bend ----------------
+            
+            # flatten benstad ----------------
+            get_flatten_springs(cloth)
+            # flatten bend ----------------
+            
+            # v bend ----------------
+            v_bend_springs(cloth)
+            # v bend ----------------
 
         # edge_stretch ----------
         edge_stretch_springs(cloth)
@@ -4711,7 +4735,7 @@ def refresh(cloth, skip=False):
 
     # old self collisions
     cloth.sc_edges = get_sc_edges(ob, fake=True)
-    cloth.sc_eidx = np.arange(len(ob.data.vertices), dtype=np.int32)
+    #cloth.sc_eidx = np.arange(cloth.v_count, dtype=np.int32)
     cloth.sc_indexer = np.arange(cloth.tridex.shape[0], dtype=np.int32)
     cloth.tris_six = np.empty((cloth.tridex.shape[0], 6, 3), dtype=np.float32)
     cloth.sc_co = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
@@ -4719,7 +4743,7 @@ def refresh(cloth, skip=False):
     # pierce data
     if not skip:
         cloth.eidx = get_sc_edges(ob)
-        cloth.sew_verts = np.zeros(len(cloth.ob.data.vertices), dtype=np.bool)
+        cloth.sew_verts = np.zeros(cloth.v_count, dtype=np.bool)
         cloth.sew_verts[cloth.eidx[cloth.sew_edges].ravel()] = True
 
         # might not be using this. Check self_collide, flood and MC_29.
@@ -4731,15 +4755,18 @@ def refresh(cloth, skip=False):
         cloth.has_butt_edges = False
         cloth.butt_edges, cloth.butt_tri_pairs = get_butt_edges(cloth)
         
-        cloth.four_edge_co = np.empty((cloth.eidx.shape[0], 4, 3), dtype=np.float32)
+        if bpy.context.scene.MC_props.dev_mode:
+            cloth.four_edge_co = np.empty((cloth.eidx.shape[0], 4, 3), dtype=np.float32)
+        
         cloth.pierce_co = np.empty((cloth.eidx.shape[0], 2, 3), dtype=np.float32)
         #cloth.pierce_co2 = np.empty((cloth.eidx.shape[0] * 2, 3), dtype=np.float32)
 
         c = cloth.eidx.shape[0]
-        cloth.pc_edges = np.empty((c, 2), dtype=np.int32)
-        idx = np.arange(c * 2, dtype=np.int32)
-        cloth.pc_edges[:, 0] = idx[:c]
-        cloth.pc_edges[:, 1] = idx[c:]
+        if bpy.context.scene.MC_props.dev_mode:
+            cloth.pc_edges = np.empty((c, 2), dtype=np.int32)
+            idx = np.arange(c * 2, dtype=np.int32)
+            cloth.pc_edges[:, 0] = idx[:c]
+            cloth.pc_edges[:, 1] = idx[c:]
         cloth.peidx = np.arange(cloth.eidx.shape[0])
 
         # boundary edgs:
@@ -5578,7 +5605,7 @@ class McPropsObject(bpy.types.PropertyGroup):
 
     # stiffness
     feedback:\
-    bpy.props.FloatProperty(name="Feedback", description="Extrapolate for faster solve", default=.5, min= -1000, max=1000, soft_min= 0.0, soft_max=1, precision=3)
+    bpy.props.FloatProperty(name="Feedback", description="Extrapolate for faster solve", default=0.0, min= -1000, max=1000, soft_min= 0.0, soft_max=1, precision=3)
 
     stretch_iters:\
     bpy.props.IntProperty(name="Iters", description="Number of iterations of cloth solver", default=2, min=0, max=1000)#, precision=1)
@@ -5963,6 +5990,31 @@ class MCResetSelectedToBasisShape(bpy.types.Operator):
         ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set('co', bco.ravel())
         ob.data.update()
 
+        return {'FINISHED'}
+
+
+def indent_seams(self=None, col_mod=MC_pierce):
+    """So we can call it as an op or on p1 import"""
+    MC_indent_seams.indent_seams(self, col_mod)
+
+
+class MCIndentSeams(bpy.types.Operator):
+    """Generate indented seams around selection"""
+    bl_idname = "object.mc_indent_seams"
+    bl_label = "MC Indent Seams"
+    bl_options = {'REGISTER', 'UNDO'}
+    def execute(self, context):
+        ob = MC_data['recent_object']
+        if ob is None:
+            ob = bpy.context.object
+        #cloth = get_cloth(ob)
+        if ob.data.is_editmode:
+            print("indenting in edit mode")
+            return {'FINISHED'}
+
+        #MC_indent_seams.indent_seams(self=None, MC_pierce)
+        indent_seams()
+        print("indenting in object mode")
         return {'FINISHED'}
 
 
@@ -6823,6 +6875,7 @@ class PANEL_PT_modelingClothGridTools(PANEL_PT_MC_Master, bpy.types.Panel):
         if sc.MC_props.dev_mode:    
             col.prop(ob.MC_props, "grid_debug_idx", text="debug")
         col.prop(ob.MC_props, "grid_triangles", text="Triangles")
+        col.operator('object.mc_indent_seams', text="indent_seams", icon='FCURVE')
 
 
 # EDIT MODE PANEL
@@ -6916,6 +6969,7 @@ classes = (
     McPropsObject,
     McPropsScene,
     MCResetToBasisShape,
+    MCIndentSeams,
     MCResetSelectedToBasisShape,
     MCRefreshVertexGroups,
     MCSurfaceFollow,
@@ -6946,6 +7000,7 @@ no_ui_classes = (
     McPropsObject,
     McPropsScene,
     MCResetToBasisShape,
+    MCIndentSeams,
     MCResetSelectedToBasisShape,
     MCRefreshVertexGroups,
     MCSurfaceFollow,

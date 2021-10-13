@@ -1,7 +1,12 @@
-import bpy
-import numpy as np
-import bmesh
-import time
+
+try:
+    import bpy
+    import bmesh
+    import numpy as np
+    import time
+
+except ImportError:
+    pass
 
 
 big_t = 0.0
@@ -206,7 +211,7 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     return efull, [bounds_8[0][both], bounds_8[1][both]]
     
 
-def self_collisions_7(sc, cloth=None):
+def self_collisions_7(sc, cloth=None, flood=False):
 
     # edge bounds:
     ex = sc.edges[:, :, 0]
@@ -434,7 +439,7 @@ def side_sort(points, tridex, cloth):
     return verts, tris
 
 
-def ray_check_oc(sc, ed, trs, cloth):
+def ray_check_oc(sc, ed, trs, cloth, flood=False):
     
     """Need to fix selected points by removing them
     from the weights. (For working in edit mode)
@@ -456,6 +461,11 @@ def ray_check_oc(sc, ed, trs, cloth):
     
     e = cloth.four_edge_co[eidx]
     t = cloth.four_edge_co[tidx]
+    
+    if flood:
+        print(eidx)
+        print("flood in edge collide")
+        return
     
     sh = e.shape[0]
     shh = e.shape
@@ -813,7 +823,7 @@ def slide_point_to_plane(e1, e2, normal, origin, intersect=False):
 class EdgeCollide():
     name = "ed"
     
-    def __init__(self, cloth):
+    def __init__(self, cloth, flood=False):
 
         # -----------------------
         ob = cloth.ob
@@ -821,7 +831,7 @@ class EdgeCollide():
 
         self.box_max = cloth.ob.MC_props.sc_box_max
         
-        self.edges = cloth.four_edge_co# same as: cloth.co[cloth.eidx]
+        self.edges = cloth.four_edge_co # cloth.start_co[cloth.eidx], cloth.co[cloth.eidx]
         
         self.big_boxes = [] # boxes that still need to be divided
         self.small_boxes = [] # finished boxes less than the maximum box size
@@ -835,6 +845,13 @@ def detect_collisions(cloth):
     sc = EdgeCollide(cloth)
     self_collisions_7(sc, cloth)
     ray_check_oc(sc, sc.ees, sc.trs, cloth)
+
+
+def flood_collisions(cloth, flood=True):
+    
+    sc = EdgeCollide(cloth, flood=True)
+    self_collisions_7(sc, cloth, flood=True)
+    ray_check_oc(sc, sc.ees, sc.trs, cloth, flood=True)
 
 
 def register():

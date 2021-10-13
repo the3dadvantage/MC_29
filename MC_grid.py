@@ -309,7 +309,7 @@ def make_objects(border, ob=None):
             return
         
     name = ob.name + '_new_border'
-    grid_name = ob.name + '_new_grid'
+    grid_name = ob.name + '_new_mc_grid'
     new = border.new_border
     new_ed = border.new_border_edges.tolist()
     mob = None
@@ -339,7 +339,6 @@ def make_objects(border, ob=None):
     veidx = [[e.verts[0].index, e.verts[1].index] for e in border.grid_obm.edges]
     border.grid_edges = veidx
     border.g_edge_co = border.grid_co[border.grid_edges]
-
     
 
 def link_mesh(verts, edges, faces, name='name', ob=None):
@@ -651,7 +650,8 @@ def grid_edge_stuff(border):
     # border edge co
     border.b_edge_co = nb[border.new_border_edges]
     border.g_edge_co = border.grid_co[border.grid_edges]
-
+    print(border.g_edge_co.shape, "g edge shape")
+    print(border.b_edge_co.shape, "b edge shape")
 
 def pairs_idx(ar):
     """Eliminates duplicates and mirror duplicates.

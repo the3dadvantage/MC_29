@@ -809,3 +809,4 @@ def flood_collisions(cloth):
     sc = PierceCollide(cloth, grid=None)
     self_collisions_7(sc, cloth)
     ray_check_oc(sc, sc.ees, sc.trs, cloth, grid=None, flood=True)
+    # made changes?

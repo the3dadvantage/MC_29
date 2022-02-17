@@ -55,6 +55,7 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs):
     weights = np.array([w, u, v]).T
     check = (u >= margin) & (v >= margin) & (w >= margin)
     
+    
     return check, weights
 
 
@@ -91,8 +92,8 @@ def generate_bounds(minc, maxc, margin):
 
     diag = (maxc - minc) / 2
     mid = minc + diag
-    mins = np.zeros((8,3), dtype=np.float32) 
-    maxs = np.zeros((8,3), dtype=np.float32) 
+    mins = np.zeros((8,3), dtype=np.float32)
+    maxs = np.zeros((8,3), dtype=np.float32)
 
     # blf
     mins[0] = minc
@@ -281,7 +282,7 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None, cloth=None):
     return full, efull, [bounds_8[0][both], bounds_8[1][both]]
     
 
-def self_collisions_7(sc, cloth=None):
+def recursive_boxes(sc, cloth=None):
 
     tx = sc.tris[:, :, 0]
     ty = sc.tris[:, :, 1]
@@ -335,7 +336,7 @@ def self_collisions_7(sc, cloth=None):
             #       each side and so on...
     
     sizes = [b[1].shape[0] for b in sc.big_boxes]
-    if len(sizes) > 0:    
+    if len(sizes) > 0:
         check = max(sizes)
     
     limit = 10
@@ -404,60 +405,67 @@ def self_collisions_7(sc, cloth=None):
             
             sc.ees += re.tolist()
             sc.trs += rt.tolist()
+
+
+def basic_collide(sc, ed, trs, cloth):
+    """Simple collision based on bounding boxes
+    with no ray check or friction"""
+    ed = np.array(ed, dtype=np.int32)
+    trs = np.array(trs, dtype=np.int32)
+
+    e = sc.edges[ed]
+    t = sc.tris[trs]
     
-
-def ray_check_oc(sc, ed, trs, cloth):
-    
-    eidx = np.array(ed, dtype=np.int32)
-    tidx = np.array(trs, dtype=np.int32)
-
-    e = sc.edges[eidx]
-    t = sc.tris[tidx]
-
-    start_co = e[:, 0]
-    co = e[:, 1]
-
-    start_ori = t[:, 0]
-    st1 = t[:, 1] - start_ori
-    st2 = t[:, 2] - start_ori
-    start_norms = np.cross(st1, st2)
-    u_start_norms = start_norms / np.sqrt(np.einsum('ij,ij->i', start_norms, start_norms))[:, None]
-    start_vecs = start_co - start_ori
-    start_dots = np.einsum('ij,ij->i', start_vecs, u_start_norms)
-    
-    ori = t[:, 3]
-    t1 = t[:, 4] - ori
-    t2 = t[:, 5] - ori
-    norms = np.cross(t1, t2)
+    s_norms = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
+    norms = np.cross(t[:, 4] - t[:, 3], t[:, 5] - t[:, 3])
     un = norms / np.sqrt(np.einsum('ij,ij->i', norms, norms))[:, None]
-
-    vecs = co - ori
-    dots = np.einsum('ij,ij->i', vecs, un)
-
-    switch = (start_dots >= 0) & (dots <= 0)
     
-    so_far = eidx[switch]
+    s_compare = np.einsum('ij,ij->i', e[:, 0] - t[:, 0], s_norms)
+    compare = np.einsum('ij,ij->i', e[:, 1] - t[:, 3], un)
+    
+    switch = (s_compare * compare) <= 0.0
+    
+    cloth.co[ed[switch]] -= (un * compare[:, None])[switch]
 
 
-    skip_friction = False # maybe for p1? Don't need revert
-    #skip_friction = True # maybe for p1?
-    if skip_friction:
-        no_fr = (-un[switch] * dots[switch][:, None])
-        cloth.co[so_far] += no_fr
-        return
+def ray_two(sc, ed, trs, cloth):
+    """Supports friction, static friction
+    and inside traingle check. Works better
+    when using low-poly objects because
+    outer margin with triangles bends
+    normals weird directions."""
+    # -----------------------------------
+    ed = np.array(ed, dtype=np.int32)
+    trs = np.array(trs, dtype=np.int32)
+
+    e = sc.edges[ed]
+    t = sc.tris[trs]
+
+    norms = np.cross(t[:, 4] - t[:, 3], t[:, 5] - t[:, 3])
+    un = norms / np.sqrt(np.einsum('ij,ij->i', norms, norms))[:, None]
+    
+    s_compare = np.einsum('ij,ij->i', e[:, 0] - t[:, 0], norms)
+    compare = np.einsum('ij,ij->i', e[:, 1] - t[:, 3], un)
+    
+    switch = (s_compare * compare) <= 0.0
         
-    st = sc.fr_tris[tidx]    
-    start_check, start_weights = inside_triangles(st[switch], start_co[switch], margin= 0.0)
-    fr_idx = tidx[switch]
-    weight_plot = t[:, 3:][switch] * start_weights[:, :, None]
+    st = sc.fr_tris[trs]
+    start_check, start_weights = inside_triangles(st[switch], e[:, 0][switch], margin= 0.0)
 
-    cl = co[switch]    
+    c_check, c_weights = inside_triangles(t[:, 3:][switch], e[:, 1][switch], margin=0.0)
+    switch[switch] = c_check
+
+    so_far = ed[switch]
+    fr_idx = trs[switch]
+    weight_plot = t[:, 3:][switch] * start_weights[:, :, None][c_check]
+
+    cl = e[:, 1][switch]
     tf_so_far = cloth.total_friction[fr_idx]
     
     fr_move = np.sum(weight_plot, axis=1) - cl
     fr = fr_move * tf_so_far
-    no_fr = (-un[switch] * dots[switch][:, None]) * (1 - tf_so_far)
 
+    no_fr = (-un[switch] * compare[switch][:, None]) * (1 - tf_so_far)
     mixed = fr + no_fr
     
     stat = (cloth.move_dist[so_far] < cloth.total_static[fr_idx])
@@ -474,21 +482,39 @@ class ObjectCollide():
 
         # -----------------------
         ob = cloth.ob
-        tris_six = cloth.oc_tris_six
-        tridex = cloth.oc_total_tridex
-
-        shift = cloth.ob_v_norms * cloth.outer_margins
+        
+        tris_six = cloth.oc_tris_six # empty float array shape N x 6 x 3 for start end triangles of collide objects combined
+        tridex = cloth.oc_total_tridex # indexer of combined objects with offset based on vert counts of each object
+        
+        # shift is outer margin
+        # ishift is outer margin minus inner margin
+        shift = cloth.ob_v_norms * cloth.outer_margins        
         ishift = cloth.ob_v_norms * cloth.inner_margins
-
+        
         self.shift = shift
         self.ishift = ishift
+                
         tris_six[:, :3] = (cloth.last_co - ishift)[tridex]
         tris_six[:, 3:] = (cloth.total_co + shift)[tridex]
         
-        self.fr_tris = (cloth.last_co + shift)[tridex]
-        # -----------------------
+#        tco = cloth.total_co + shift
+#        test_ob = bpy.data.objects['test']
+#        test_ob.data.vertices.foreach_set('co', tco.ravel())
+#        test_ob.data.update()
 
-        self.box_max = 150#cloth.ob.MC_props.sc_box_max
+#        tco2 = cloth.last_co - ishift
+#        test_ob_2 = bpy.data.objects['test2']
+#        test_ob_2.data.vertices.foreach_set('co', tco2.ravel())
+#        test_ob_2.data.update()
+
+#        tco3 = cloth.total_co
+#        test_ob_3 = bpy.data.objects['t3']
+#        test_ob_3.data.vertices.foreach_set('co', tco3.ravel())
+#        test_ob_3.data.update()
+        
+        self.fr_tris = (cloth.last_co + shift)[tridex]
+
+        self.box_max = 150 #cloth.ob.MC_props.sc_box_max
         
         self.tris = tris_six
         self.edges = cloth.ob_co[cloth.sc_edges]
@@ -503,5 +529,10 @@ class ObjectCollide():
 def detect_collisions(cloth):
     
     sc = ObjectCollide(cloth)
-    self_collisions_7(sc, cloth)
-    ray_check_oc(sc, sc.ees, sc.trs, cloth)
+    recursive_boxes(sc, cloth)
+    
+    if bpy.context.scene.MC_props.basic_collide:
+        basic_collide(sc, sc.ees, sc.trs, cloth)
+
+    else:
+        ray_two(sc, sc.ees, sc.trs, cloth)
